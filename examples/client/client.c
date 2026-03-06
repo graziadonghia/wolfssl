@@ -55,6 +55,7 @@ static const char *wolfsentry_config_path = NULL;
 
 #include <examples/client/client.h>
 #include <wolfssl/error-ssl.h>
+#include <wolfssl/wolfcrypt/hmac.h>
 
 #if !defined(NO_WOLFSSL_CLIENT) && !defined(NO_TLS)
 
@@ -2003,7 +2004,87 @@ static void ExampleDebugMemoryCb(size_t sz, int bucketSz, byte st, int type) {
 }
 #endif
 
+/* ========================================================= */
+/* QKDNetSim: MOCK SAE-KMS AUTHENTICATION BLOCK              */
+/* ========================================================= */
+// symmetric key shared between SAE and local KMS for authentication
+const byte KMS_SHARED_SECRET[] = "SuperSecretIoTKey256Bit12345678";
 
+// mocked function that simulated authenticating and fetching QKD key
+static int fetch_qkd_key_from_kms(char * out_key_id, byte *out_key_material) {
+    Hmac hmac;
+    byte mac_tag[WC_SHA256_DIGEST_SIZE];
+
+    // API request we want to authenticate
+    const char *api_request = "GET /api/v1/keys/random HTTP/1.1";
+
+    // 1. generate HMAC-SHA256 tag
+    wc_HmacSetKey(&hmac, WC_HASH_TYPE_SHA256, KMS_SHARED_SECRET, 32);
+    wc_HmacUpdate(&hmac, (const byte*)api_request, XSTRLEN(api_request));
+    wc_HmacFinal(&hmac, mac_tag);
+
+    // 2. [Simulated] send api_request + maxc_tag to KMS via HTTP
+    // 3. [Simulated] receive JSON containing the QKD key and ID
+    printf("\n[QKD-KMS] Successfully authenticated to KMS using HMAC-SHA256!\n");
+
+    // 4. populate the mock data we "received" from the KMS
+    strcpy(out_key_id, "QKD_KEY_ID_001");
+
+    // fill 32-byte (256 bit) key material with dummy data
+    memset(out_key_material, 0xAB, 32); // 0xAB is just a placeholder byte
+
+    return 0; // success
+}
+
+static unsigned int qkd_psk_client_cs_cb(WOLFSSL* ssl, const char *hint, 
+    char *identity, unsigned int max_identity_len, unsigned char *key, 
+    unsigned int max_key_len, const char *ciphersuite)
+{
+    char qkd_key_id[64];
+    byte qkd_key_material[32];
+    
+    /* Tell the compiler we intentionally aren't using these standard callback args */
+    (void)ssl;
+    (void)hint;
+    (void)max_key_len;
+
+    if (fetch_qkd_key_from_kms(qkd_key_id, qkd_key_material) != 0) {
+        printf("[QKD-KMS] Failed to fetch QKD key from KMS\n");
+        return 0; // failure
+    }
+    
+    strncpy(identity, qkd_key_id, max_identity_len);
+    memcpy(key, qkd_key_material, 32);
+
+    printf("[QKD-KMS] QKD PSK injected! ID: %s, Suite: %s\n\n", identity, ciphersuite);
+    return 32; // length of the key material
+}
+
+static unsigned int qkd_psk_client_tls13_cb(WOLFSSL* ssl, const char *hint,
+    char *identity, unsigned int max_identity_len, unsigned char *key,
+    unsigned int max_key_len, const char **ciphersuite)
+{
+    char qkd_key_id[64];
+    byte qkd_key_material[32];
+    (void)ssl; (void)hint; (void)max_key_len; (void)ciphersuite;
+
+    // 1. Fetch from KMS
+    if (fetch_qkd_key_from_kms(qkd_key_id, qkd_key_material) != 0) return 0;
+
+    // 2. Inject into TLS
+    strncpy(identity, qkd_key_id, max_identity_len);
+    memcpy(key, qkd_key_material, 32);
+    
+    printf("[QKD-KMS] QKD PSK Injected! ID: %s\n\n", identity);
+    return 32; 
+}
+static unsigned int qkd_psk_client_cb(WOLFSSL* ssl, const char *hint,
+        char *identity, unsigned int max_identity_len,
+        unsigned char *key, unsigned int max_key_len)
+{
+    return qkd_psk_client_cs_cb(ssl, hint, identity, max_identity_len, key, max_key_len, "default");
+}
+/* ========================================================= */
 
 THREAD_RETURN WOLFSSL_THREAD client_test(void* args)
 {
@@ -3359,60 +3440,25 @@ THREAD_RETURN WOLFSSL_THREAD client_test(void* args)
     }
 #endif /* HAVE_RPK */
 
-    if (usePsk) {
+
+if (usePsk) {
 #ifndef NO_PSK
-        const char *defaultCipherList = cipherList;
+        // 1. Register your custom QKD PSK callbacks
+        wolfSSL_CTX_set_psk_client_callback(ctx, qkd_psk_client_cb);
+        wolfSSL_CTX_set_psk_client_cs_callback(ctx, qkd_psk_client_cs_cb);
 
-        wolfSSL_CTX_set_psk_client_callback(ctx, my_psk_client_cb);
 #ifdef WOLFSSL_TLS13
-    #if !defined(WOLFSSL_PSK_TLS13_CB) && !defined(WOLFSSL_PSK_ONE_ID)
-        if (!opensslPsk) {
-            wolfSSL_CTX_set_psk_client_cs_callback(ctx, my_psk_client_cs_cb);
-        }
-        else
-    #endif
-        {
-            wolfSSL_CTX_set_psk_client_tls13_callback(ctx,
-                my_psk_client_tls13_cb);
-        }
+        // 2. Register the strict TLS 1.3 specific callback
+        wolfSSL_CTX_set_psk_client_tls13_callback(ctx, qkd_psk_client_tls13_cb);
 #endif
-        if (defaultCipherList == NULL) {
-        #if defined(HAVE_AESGCM) && !defined(NO_DH)
-            #ifdef WOLFSSL_TLS13
-                defaultCipherList = "TLS13-AES128-GCM-SHA256"
-                #ifndef WOLFSSL_NO_TLS12
-                                    ":DHE-PSK-AES128-GCM-SHA256"
-                #endif
-                ;
-            #else
-                defaultCipherList = "DHE-PSK-AES128-GCM-SHA256";
-            #endif
-        #elif defined(HAVE_AESGCM) && defined(WOLFSSL_TLS13)
-                defaultCipherList = "TLS13-AES128-GCM-SHA256"
-                #ifndef WOLFSSL_NO_TLS12
-                                    ":PSK-AES128-GCM-SHA256"
-                #endif
-                ;
-        #elif defined(HAVE_NULL_CIPHER)
-                defaultCipherList = "PSK-NULL-SHA256";
-        #elif !defined(NO_AES_CBC)
-                defaultCipherList = "PSK-AES128-CBC-SHA256";
-        #else
-                defaultCipherList = "PSK-AES128-GCM-SHA256";
-        #endif
-            if (wolfSSL_CTX_set_cipher_list(ctx, defaultCipherList)
-                                                            !=WOLFSSL_SUCCESS) {
-                wolfSSL_CTX_free(ctx); ctx = NULL;
-                err_sys("client can't set cipher list 2");
-            }
-        }
-        wolfSSL_CTX_set_psk_callback_ctx(ctx, (void*)defaultCipherList);
-#endif
-        if (useClientCert) {
-            useClientCert = 0;
-        }
-    }
+        
+        // CRITICAL FIX 1: We DO NOT force a PSK-only cipher list here. 
+        // We let TLS 1.3 negotiate normally so it expects certificates.
 
+        // CRITICAL FIX 2: We DO NOT set useClientCert = 0 here!
+        // We leave it alone so ML-DSA authentication still happens!
+#endif
+    }
     if (useAnon) {
 #ifdef HAVE_ANON
         if (cipherList == NULL || (cipherList && useDefCipherList)) {

@@ -1550,6 +1550,66 @@ static int server_srtp_test(WOLFSSL *ssl, func_args *args)
 }
 #endif
 
+/* ========================================================= */
+/* QKDNetSim: MOCK SERVER-KMS AUTHENTICATION BLOCK           */
+/* ========================================================= */
+#include <wolfssl/wolfcrypt/hmac.h>
+
+static unsigned int qkd_psk_server_cs_cb(WOLFSSL* ssl, const char* identity,
+        unsigned char* key, unsigned int max_key_len, const char** ciphersuite)
+{
+    /* Tell the compiler we intentionally aren't using these standard callback args */
+    (void)ssl;
+    (void)max_key_len;
+
+    printf("\n[QKD-KMS] Server received QKD Key ID from Client: %s\n", identity);
+
+    // In your real code, the server will authenticate to its KMS using HMAC here,
+    // sending the 'identity' to fetch the matching QKD key.
+    
+    if (strncmp(identity, "QKD_KEY_ID_001", 14) == 0) {
+        printf("[QKD-KMS] Authenticating to Server KMS via HMAC-SHA256...\n");
+        printf("[QKD-KMS] Fetching matching QKD Key...\n");
+        
+        // Fill the key buffer with the exact same 32 bytes the client generated
+        memset(key, 0xAB, 32); 
+        *ciphersuite = "TLS13-AES256-GCM-SHA384";
+        
+        printf("[QKD-KMS] Server QKD PSK successfully injected into Key Schedule!\n\n");
+        return 32; // Success: Return key length
+    }
+
+    printf("[QKD-KMS] Unknown Key ID. Handshake will fail.\n");
+    return 0; // Fail: Unknown Key ID
+}
+static unsigned int qkd_psk_server_tls13_cb(WOLFSSL* ssl, const char* identity,
+        unsigned char* key, unsigned int max_key_len, const char** ciphersuite)
+{
+    (void)ssl; (void)max_key_len;
+    printf("\n[QKD-KMS] Server received QKD Key ID from Client: %s\n", identity);
+    
+    if (strncmp(identity, "QKD_KEY_ID_001", 14) == 0) {
+        printf("[QKD-KMS] Authenticating to Server KMS via HMAC-SHA256...\n");
+        printf("[QKD-KMS] Fetching matching QKD Key...\n");
+        
+        // Fill the key buffer with the exact same 32 bytes the client generated
+        memset(key, 0xAB, 32); 
+        *ciphersuite = "TLS13-AES256-GCM-SHA384";
+        
+        printf("[QKD-KMS] Server QKD PSK successfully injected into Key Schedule!\n\n");
+        return 32; 
+    }
+
+    printf("[QKD-KMS] Unknown Key ID. Handshake will fail.\n");
+    return 0; 
+}
+
+static unsigned int qkd_psk_server_cb(WOLFSSL* ssl, const char* identity,
+        unsigned char* key, unsigned int max_key_len)
+{
+    return qkd_psk_server_cs_cb(ssl, identity, key, max_key_len, NULL);
+}
+/* ========================================================= */
 
 THREAD_RETURN WOLFSSL_THREAD server_test(void* args)
 {
@@ -2922,47 +2982,19 @@ THREAD_RETURN WOLFSSL_THREAD server_test(void* args)
     }
 #endif
 
-    if (usePsk || usePskPlus) {
+ if (usePsk || usePskPlus) {
 #ifndef NO_PSK
-        const char *defaultCipherList = cipherList;
-
-        SSL_CTX_set_psk_server_callback(ctx, my_psk_server_cb);
-    #ifdef WOLFSSL_TLS13
-        wolfSSL_CTX_set_psk_server_tls13_callback(ctx, my_psk_server_tls13_cb);
-    #endif
+        // 1. Register all three callbacks correctly
+        SSL_CTX_set_psk_server_callback(ctx, qkd_psk_server_cb);
+#ifdef WOLFSSL_TLS13
+        wolfSSL_CTX_set_psk_server_tls13_callback(ctx, qkd_psk_server_tls13_cb);
+#endif
+        
         if (sendPskIdentityHint == 1)
             SSL_CTX_use_psk_identity_hint(ctx, "cyassl server");
 
-        if (defaultCipherList == NULL && !usePskPlus) {
-        #if defined(HAVE_AESGCM) && !defined(NO_DH)
-            #ifdef WOLFSSL_TLS13
-                defaultCipherList = "TLS13-AES128-GCM-SHA256"
-                #ifndef WOLFSSL_NO_TLS12
-                                    ":DHE-PSK-AES128-GCM-SHA256"
-                #endif
-                ;
-            #else
-                defaultCipherList = "DHE-PSK-AES128-GCM-SHA256";
-            #endif
-                needDH = 1;
-        #elif defined(HAVE_AESGCM) && defined(WOLFSSL_TLS13)
-                defaultCipherList = "TLS13-AES128-GCM-SHA256"
-                #ifndef WOLFSSL_NO_TLS12
-                                    ":PSK-AES128-GCM-SHA256"
-                #endif
-                ;
-        #elif defined(HAVE_NULL_CIPHER)
-                defaultCipherList = "PSK-NULL-SHA256";
-        #elif !defined(NO_AES_CBC)
-                defaultCipherList = "PSK-AES128-CBC-SHA256";
-        #else
-                defaultCipherList = "PSK-AES128-GCM-SHA256";
-        #endif
-            if (SSL_CTX_set_cipher_list(ctx, defaultCipherList)
-                != WOLFSSL_SUCCESS)
-                err_sys_ex(runWithErrors, "server can't set cipher list 2");
-        }
-        wolfSSL_CTX_set_psk_callback_ctx(ctx, (void*)defaultCipherList);
+        // CRITICAL FIX: We DO NOT force a PSK-only cipher list here. 
+        // We let TLS 1.3 negotiate normally so it expects ML-DSA certificates!
 #endif /* !NO_PSK */
     }
 #ifndef NO_CERTS
