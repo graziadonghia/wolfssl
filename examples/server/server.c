@@ -1550,10 +1550,149 @@ static int server_srtp_test(WOLFSSL *ssl, func_args *args)
 }
 #endif
 
-/* ========================================================= */
-/* QKDNetSim: MOCK SERVER-KMS AUTHENTICATION BLOCK           */
-/* ========================================================= */
 #include <wolfssl/wolfcrypt/hmac.h>
+#include <sys/socket.h>
+#include <arpa/inet.h>
+#include <unistd.h>
+#include <wolfssl/wolfcrypt/coding.h>
+/* ========================================================= */
+/* QKDNetSim: REAL ETSI-014 (SERVER) FETCH LOGIC             */
+/* ========================================================= */
+
+// Fetches the matching key material from Bob's KMS using the ID sent by Alice
+static int fetch_qkd_key_from_kms(const char* key_id, byte* out_key_material) {
+    printf("[QKD-KMS] Server requesting dec_keys for ID: %s\n", key_id);
+
+    int sock = socket(AF_INET, SOCK_STREAM, 0);
+    struct sockaddr_in kms_addr;
+    kms_addr.sin_family = AF_INET;
+    kms_addr.sin_port = htons(81);
+    inet_pton(AF_INET, "172.30.0.100", &kms_addr.sin_addr);
+
+    if (connect(sock, (struct sockaddr *)&kms_addr, sizeof(kms_addr)) < 0) {
+        printf("[QKD-KMS] FATAL: SAE cannot connect to KMS at 172.30.0.100:81\n");
+        return -1;
+    }
+
+    // Must match Bob's script exactly: {"key_IDs": [{"key_ID": "UUID"}]}
+    char json_body[512];
+    sprintf(json_body, "{\"key_IDs\": [{\"key_ID\": \"%s\"}]}", key_id);
+    char request[1024];
+
+    // ----- HMAC-SHA384 AUTHENTICATION ---
+    const byte KMS_SHARED_SECRET[] = "ServerSecretIoTKey384BitQuantumSafe1234567890123";
+    printf("[QKD-KMS] Computing HMAC-SHA384 of request body for authentication...\n");
+    Hmac hmac;
+    byte mac_tag[WC_SHA384_DIGEST_SIZE]; // 48 bytes
+    char hex_mac[WC_SHA384_DIGEST_SIZE * 2 + 1];
+
+    wc_HmacSetKey(&hmac, WC_HASH_TYPE_SHA384, KMS_SHARED_SECRET, strlen((char *)KMS_SHARED_SECRET));
+    wc_HmacUpdate(&hmac, (const byte*)json_body, strlen(json_body));
+    wc_HmacFinal(&hmac, mac_tag);
+    for (int i = 0; i < WC_SHA384_DIGEST_SIZE; i++) {
+        sprintf(&hex_mac[i * 2], "%02x", mac_tag[i]);
+    }
+
+    printf("[QKD-KMS] Computed HMAC-SHA384: %s\n", hex_mac);
+    printf("[QKD-KMS] Sending HTTP request to KMS...\n%s\n", json_body);
+
+    sprintf(request,
+        "POST /api/v1/keys/aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa/dec_keys HTTP/1.1\r\n"
+        "Host: 172.30.0.100\r\n"
+        "Content-Type: application/json\r\n"
+        "Authorization: HMAC-SHA384 %s\r\n"
+        "Content-Length: %d\r\n"
+        "Connection: close\r\n\r\n"
+        "%s", hex_mac, (int)strlen(json_body), json_body);
+
+    send(sock, request, strlen(request), 0);
+
+    char response[4096]; 
+    memset(response, 0, sizeof(response));
+    int bytes_received = 0;
+    ssize_t n = 0;
+    while((n = read(sock, response + bytes_received, (int)sizeof(response) - bytes_received - 1)) > 0) {
+        bytes_received += (int)n;
+
+        // smart HTTP break: check if we have received the full body
+        char *header_end = strstr(response, "\r\n\r\n");
+        if (header_end != NULL) {
+            char *cl_ptr = strstr(response, "Content-Length: ");
+            if (cl_ptr) {
+                int content_length = atoi(cl_ptr + strlen("Content-Length: "));
+                int header_length = (header_end + 4) - response;
+                if ((bytes_received - header_length) >= content_length) {
+                    break; // Full body received
+                }
+            }
+            else if (strchr(header_end, '}')) {
+                break; // No Content-Length but we see the end of JSON body
+            }
+        }
+    }
+    close(sock);
+
+    if (strstr(response, "HTTP/1.1 200 OK") == NULL) {
+        if (strstr(response, "HTTP/1.1 401 Unauthorized")) {
+            printf("[QKD-KMS] ERROR: KMS rejected authentication. Check shared secret and HMAC.\n");
+        }
+        else if (strstr(response, "HTTP/1.1 406 Not Acceptable")) {
+            printf("[QKD-KMS] ERROR: KMS did not find the requested key ID.\n");
+        }
+        else if (strstr(response, "HTTP/1.1 404 Not Found")) {
+            printf("[QKD-KMS] ERROR: KMS endpoint not found. Check URL and API version.\n");
+        }
+        else {
+            printf("[QKD-KMS] ERROR: Unexpected HTTP response from KMS:\n%s\n", response);
+        }
+        return -1;
+    }
+
+    // Parse the key material
+    char* key_label = strstr(response, "\"key\":\"");
+    if (!key_label) return -1;
+    
+    char* key_start = key_label + 7;
+    char* key_end = strchr(key_start, '"');
+    char b64_key[256];
+    size_t b64_len = key_end - key_start;
+    strncpy(b64_key, key_start, b64_len);
+    b64_key[b64_len] = '\0';
+
+    word32 outLen = 32;
+    if (Base64_Decode((byte*)b64_key, (word32)b64_len, out_key_material, &outLen) != 0) {
+        printf("[QKD-KMS] ERROR: Bob failed base64 decoding.\n");
+        return -1;
+    }
+
+    return 0; // Success
+}
+
+static unsigned int qkd_psk_server_tls13_cb(WOLFSSL* ssl, const char* identity,
+        unsigned char* key, unsigned int max_key_len, const char** ciphersuite)
+{
+    (void)ssl; (void)max_key_len; 
+
+    // Use the new fetch function
+    if (fetch_qkd_key_from_kms(identity, key) != 0) {
+        printf("[QKD-KMS] Bob failed to sync key. Handshake will abort.\n");
+        return 0;
+    }
+
+    // Ensure the ciphersuite matches Alice's forced suite
+    *ciphersuite = "TLS13-AES256-GCM-SHA384";
+    
+    // --- NEW: PROOF OF INJECTION ---
+    printf("[QKD-KMS] PROOF: Injecting 32-byte QKD PSK into TLS 1.3 HKDF Early Secret:\n  -> ");
+    for (int i = 0; i < 32; i++) {
+        printf("%02x", key[i]);
+    }
+    printf("\n");
+    // -------------------------------
+    return 32; 
+}
+/* ========================================================= */
+
 
 static unsigned int qkd_psk_server_cs_cb(WOLFSSL* ssl, const char* identity,
         unsigned char* key, unsigned int max_key_len, const char** ciphersuite)
@@ -1575,35 +1714,19 @@ static unsigned int qkd_psk_server_cs_cb(WOLFSSL* ssl, const char* identity,
         memset(key, 0xAB, 32); 
         *ciphersuite = "TLS13-AES256-GCM-SHA384";
         
-        printf("[QKD-KMS] Server QKD PSK successfully injected into Key Schedule!\n\n");
+    // --- NEW: PROOF OF INJECTION ---
+    printf("[QKD-KMS] PROOF: Injecting 32-byte QKD PSK into TLS 1.3 HKDF Early Secret:\n  -> ");
+    for (int i = 0; i < 32; i++) {
+        printf("%02x", key[i]);
+    }
+    printf("\n");
+    // -------------------------------
         return 32; // Success: Return key length
     }
 
     printf("[QKD-KMS] Unknown Key ID. Handshake will fail.\n");
     return 0; // Fail: Unknown Key ID
 }
-static unsigned int qkd_psk_server_tls13_cb(WOLFSSL* ssl, const char* identity,
-        unsigned char* key, unsigned int max_key_len, const char** ciphersuite)
-{
-    (void)ssl; (void)max_key_len;
-    printf("\n[QKD-KMS] Server received QKD Key ID from Client: %s\n", identity);
-    
-    if (strncmp(identity, "QKD_KEY_ID_001", 14) == 0) {
-        printf("[QKD-KMS] Authenticating to Server KMS via HMAC-SHA256...\n");
-        printf("[QKD-KMS] Fetching matching QKD Key...\n");
-        
-        // Fill the key buffer with the exact same 32 bytes the client generated
-        memset(key, 0xAB, 32); 
-        *ciphersuite = "TLS13-AES256-GCM-SHA384";
-        
-        printf("[QKD-KMS] Server QKD PSK successfully injected into Key Schedule!\n\n");
-        return 32; 
-    }
-
-    printf("[QKD-KMS] Unknown Key ID. Handshake will fail.\n");
-    return 0; 
-}
-
 static unsigned int qkd_psk_server_cb(WOLFSSL* ssl, const char* identity,
         unsigned char* key, unsigned int max_key_len)
 {
