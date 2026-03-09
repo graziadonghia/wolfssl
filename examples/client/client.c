@@ -100,9 +100,9 @@ static int devId = INVALID_DEVID;
 #define TEST_STR_TERM
 #endif
 
-static const char kHelloMsg[] = "hello wolfssl!" TEST_STR_TERM;
+// static const char kHelloMsg[] = "hello wolfssl!" TEST_STR_TERM;
 #ifndef NO_SESSION_CACHE
-static const char kResumeMsg[] = "resuming wolfssl!" TEST_STR_TERM;
+//static const char kResumeMsg[] = "resuming wolfssl!" TEST_STR_TERM;
 #endif
 
 #if defined(WOLFSSL_TLS13) && defined(WOLFSSL_EARLY_DATA)
@@ -1318,6 +1318,7 @@ ClientRead(WOLFSSL* ssl, char* reply, int replyLen, int mustRead, const char* st
     return err;
 }
 
+#if 0
 static int
 ClientWriteRead(WOLFSSL* ssl,
                 const char* msg,
@@ -1395,7 +1396,7 @@ ClientWriteRead(WOLFSSL* ssl,
 
     return ret;
 }
-
+#endif
 /* when adding new option, please follow the steps below: */
 /*  1. add new option message in English section          */
 /*  2. increase the number of the second column           */
@@ -2267,6 +2268,7 @@ ExampleDebugMemoryCb(size_t sz, int bucketSz, byte st, int type)
 /* ========================================================= */
 
 static int key_already_fetched = 0;
+static int is_resuming = 0;
 static char cached_key_id[128];
 static byte cached_key_material[32];
 
@@ -2307,13 +2309,13 @@ fetch_qkd_key_from_kms(char* out_key_id, byte* out_key_material)
         printf("[QKD-KMS] FATAL: Connection to local KMS failed.\n");
         return -1;
     }
-    
+
     char json_body[256];
     char request[1024];
     sprintf(json_body,
-        "{\"number\": 1, \"size\": %d, \"qos_requirements\": {\"max_epsilon\": %f}}",
-        key_size,
-        target_epsilon);
+            "{\"number\": 1, \"size\": %d, \"qos_requirements\": {\"max_epsilon\": %f}}",
+            key_size,
+            target_epsilon);
     // ----- HMAC-SHA384 AUTHENTICATION ---
     const byte KMS_SHARED_SECRET[] = "ClientSecretIoTKey384BitQuantumSafe1234567890123";
     printf("[QKD-KMS] Computing HMAC-SHA384 of request body for authentication...\n");
@@ -2321,15 +2323,15 @@ fetch_qkd_key_from_kms(char* out_key_id, byte* out_key_material)
     byte mac_tag[WC_SHA384_DIGEST_SIZE]; // 48 bytes
     char hex_mac[WC_SHA384_DIGEST_SIZE * 2 + 1];
 
-    wc_HmacSetKey(&hmac, WC_HASH_TYPE_SHA384, KMS_SHARED_SECRET, strlen((char *)KMS_SHARED_SECRET));
+    wc_HmacSetKey(&hmac, WC_HASH_TYPE_SHA384, KMS_SHARED_SECRET, strlen((char*)KMS_SHARED_SECRET));
     wc_HmacUpdate(&hmac, (const byte*)json_body, strlen(json_body));
     wc_HmacFinal(&hmac, mac_tag);
-    for (int i = 0; i < WC_SHA384_DIGEST_SIZE; i++) {
+    for (int i = 0; i < WC_SHA384_DIGEST_SIZE; i++)
+    {
         sprintf(&hex_mac[i * 2], "%02x", mac_tag[i]);
     }
 
-    printf("[QKD-KMS] HMAC-SHA384 of request body: %s\n", hex_mac);
-    printf("[QKD-KMS] Sending HTTP request to KMS:\n%s\n", json_body);
+    printf("[QKD-KMS] Sending HTTP request to KMS...\n");
 
     // inject into HTTP header
     sprintf(request,
@@ -2351,22 +2353,27 @@ fetch_qkd_key_from_kms(char* out_key_id, byte* out_key_material)
     // read full response
     int bytes_received = 0;
     ssize_t n = 0;
-    while ((n = read(sock, response + bytes_received, (int)sizeof(response) - bytes_received - 1)) > 0)
+    while ((n = read(sock, response + bytes_received, (int)sizeof(response) - bytes_received - 1)) >
+           0)
     {
         bytes_received += (int)n;
 
         // smart HTTP break: check if we have received the full body
-        char *header_end = strstr(response, "\r\n\r\n");
-        if (header_end != NULL) {
-            char *cl_ptr = strstr(response, "Content-Length: ");
-            if (cl_ptr) {
+        char* header_end = strstr(response, "\r\n\r\n");
+        if (header_end != NULL)
+        {
+            char* cl_ptr = strstr(response, "Content-Length: ");
+            if (cl_ptr)
+            {
                 int content_length = atoi(cl_ptr + strlen("Content-Length: "));
                 int header_length = (header_end + 4) - response; // +4 for the \r\n\r\n
-                if ((bytes_received - header_length) >= content_length) {
+                if ((bytes_received - header_length) >= content_length)
+                {
                     break; // we have received the full body
                 }
             }
-            else if (strchr(header_end, '}')) {
+            else if (strchr(header_end, '}'))
+            {
                 break; // fallback: break if we see the end of a JSON object
             }
         }
@@ -2376,10 +2383,12 @@ fetch_qkd_key_from_kms(char* out_key_id, byte* out_key_material)
     // check for HTTP 200
     if (strstr(response, "HTTP/1.1 200 OK") == NULL)
     {
-        if (strstr(response, "HTTP/1.1 401 Unauthorized")) {
+        if (strstr(response, "HTTP/1.1 401 Unauthorized"))
+        {
             printf("[QKD-KMS] Authentication failed. Check shared secret and HMAC.\n");
         }
-        else if (strstr(response, "HTTP/1.1 406 Not Acceptable")) {
+        else if (strstr(response, "HTTP/1.1 406 Not Acceptable"))
+        {
             printf("[QKD-KMS] KMS cannot meet the QoS requirements\n");
         }
         else
@@ -2454,6 +2463,12 @@ qkd_psk_client_cs_cb(WOLFSSL* ssl,
     (void)max_key_len;
     (void)ciphersuite;
 
+    if (is_resuming)
+    {
+        printf("[TLS 1.3] Resumption active. Bypassing QKD fetch and using Session Ticket.\n");
+        return 0; // Returning 0 forces wolfSSL to use the cached ticket!
+    }
+    // --------------------------
     if (key_already_fetched == 0)
     {
         // 1. Fetch from KMS
@@ -2471,15 +2486,11 @@ qkd_psk_client_cs_cb(WOLFSSL* ssl,
     // 2. Inject into TLS
     strncpy(identity, cached_key_id, max_identity_len);
     memcpy(key, cached_key_material, 32);
-    // --- NEW: PROOF OF INJECTION ---
-    // printf("[QKD-KMS] PROOF: Injecting 32-byte QKD PSK into TLS 1.3 HKDF Early Secret:\n  -> ");
-    // for (int i = 0; i < 32; i++) {
-    //     printf("%02x", key[i]);
-    // }
     printf("\n");
     // -------------------------------
-    // corruption test: flip the first bit of the QKD key to see if it causes handshake failure (for testing only, should be removed in production)
-    //key[0] ^= 0x01;
+    // corruption test: flip the first bit of the QKD key to see if it causes handshake failure (for
+    // testing only, should be removed in production)
+    // key[0] ^= 0x01;
 
     return 32;
 }
@@ -2497,6 +2508,12 @@ qkd_psk_client_tls13_cb(WOLFSSL* ssl,
     (void)hint;
     (void)max_key_len;
     (void)ciphersuite;
+    if (is_resuming)
+    {
+        printf("[TLS 1.3] Resumption active. Bypassing QKD fetch and using Session Ticket.\n");
+        return 0; // Returning 0 forces wolfSSL to use the cached ticket!
+    }
+    // --------------------------
     if (key_already_fetched == 0)
     {
         // 1. Fetch from KMS
@@ -2739,7 +2756,7 @@ client_test(void* args)
 #endif
 
 #ifdef HAVE_SESSION_TICKET
-    int waitTicket = 0;
+    int waitTicket = 1;
 #endif /* HAVE_SESSION_TICKET */
 #ifdef WOLFSSL_DTLS_CID
     int useDtlsCID = 0;
@@ -4133,7 +4150,7 @@ client_test(void* args)
 #endif
     }
 
-    if (!usePsk && !useAnon && !useVerifyCb && myVerifyAction != VERIFY_FORCE_FAIL)
+    if (!useAnon && !useVerifyCb && myVerifyAction != VERIFY_FORCE_FAIL)
     {
 #if defined(OPENSSL_ALL) && defined(WOLFSSL_CERT_GEN) &&                                           \
     (defined(WOLFSSL_CERT_REQ) || defined(WOLFSSL_CERT_EXT)) && !defined(NO_FILESYSTEM) &&         \
@@ -5310,65 +5327,93 @@ client_test(void* args)
         }
     }
 #endif /* HAVE_SECURE_RENEGOTIATION */
-
-    XMEMSET(msg, 0, sizeof(msg));
-    if (sendGET)
+    (void)sendGET;
+#if defined(WOLFSSL_TLS13) && defined(HAVE_SESSION_TICKET)
+    if (waitTicket == 1)
     {
-        printf("SSL connect ok, sending GET...\n");
+        printf("[TLS 1.3] Waiting to receive Session Ticket from server...\n");
+        unsigned char ticketBuf[SESSION_TICKET_LEN];
+        int zeroReturn = 0;
+        word32 size = sizeof(ticketBuf);
 
-        msgSz = (int)XSTRLEN(kHttpGetMsg);
-        XMEMCPY(msg, kHttpGetMsg, (size_t)msgSz);
-    }
-    else
-    {
-        msgSz = (int)XSTRLEN(kHelloMsg);
-        XMEMCPY(msg, kHelloMsg, (size_t)msgSz);
-    }
-
-/* allow some time for exporting the session */
-#ifdef WOLFSSL_SESSION_EXPORT_DEBUG
-    TEST_DELAY();
-#endif /* WOLFSSL_SESSION_EXPORT_DEBUG */
-
-#ifdef WOLFSSL_SRTP
-    if (dtlsSrtpProfiles != NULL)
-    {
-        err = client_srtp_test(ssl, (func_args*)args);
-        if (err != 0)
+        err = wolfSSL_get_SessionTicket(ssl, ticketBuf, &size);
+        if (err < 0)
         {
-            if (exitWithRet)
-            {
-                ((func_args*)args)->return_code = err;
-                wolfSSL_free(ssl);
-                ssl = NULL;
-                CloseSocket(sockfd);
-                wolfSSL_CTX_free(ctx);
-                ctx = NULL;
-                goto exit;
-            }
-            /* else */
-            err_sys("SRTP check failed");
+            err_sys("wolfSSL_get_SessionTicket failed");
         }
-    }
-#endif /* WOLFSSL_SRTP */
 
-#ifdef WOLFSSL_TLS13
-    if (updateKeysIVs)
-    {
-        wolfSSL_update_keys(ssl);
+        if (size == 0)
+        {
+            // Process the background messages to catch the ticket
+            err = process_handshake_messages(ssl, !nonBlocking, &zeroReturn);
+            if (err < 0)
+            {
+                err_sys("error waiting for session ticket");
+            }
+        }
+        printf("[TLS 1.3] Session Ticket received and stored in cache.\n");
     }
 #endif
 
-    err = ClientWriteRead(ssl, msg, msgSz, reply, sizeof(reply) - 1, 1, "", exitWithRet);
-    if (exitWithRet && (err != 0))
+    (void)sendGET;
+
+    if (!resumeSession)
     {
-        ((func_args*)args)->return_code = err;
-        wolfSSL_free(ssl);
-        ssl = NULL;
-        CloseSocket(sockfd);
-        wolfSSL_CTX_free(ctx);
-        ctx = NULL;
-        goto exit;
+        printf("\n=======================================================\n");
+        printf("\n=======================================================\n");
+        printf(" TLS 1.3 Hybrid QKD-PQC Session Established!\n");
+        printf(" Type your messages below. Type 'quit' to close tunnel.\n");
+        printf("=======================================================\n\n");
+
+        while (1)
+        {
+            // 1. Alice types a message
+            XMEMSET(msg, 0, sizeof(msg)); // Clear the transmit buffer
+            printf("Client (IoT) > ");
+
+            if (fgets(msg, sizeof(msg), stdin) == NULL)
+            {
+                break;
+            }
+
+            msgSz = (int)XSTRLEN(msg);
+            if (msgSz > 0 && msg[msgSz - 1] == '\n')
+            {
+                msg[msgSz - 1] = '\0';
+                msgSz--;
+            }
+
+            if (msgSz == 0)
+            {
+                continue; // Don't send empty lines
+            }
+
+            // 2. Send the message to Bob
+            err = ClientWrite(ssl, msg, msgSz, "", exitWithRet);
+            if (err != 0)
+            {
+                printf("\n[TLS ERROR] Failed to send message.\n");
+                break;
+            }
+
+            // Break the loop if Alice wants to quit
+            if (strncmp(msg, "quit", 4) == 0)
+            {
+                printf("Closing session gracefully...\n");
+                break;
+            }
+
+            // 3. Wait for Bob's typed reply
+            XMEMSET(reply, 0, sizeof(reply)); // Clear the receive buffer
+            err = ClientRead(ssl, reply, sizeof(reply) - 1, 1, "Server (IoT) > ", exitWithRet);
+            if (err != 0)
+            {
+                printf("\n[TLS ERROR] Failed to read reply.\n");
+                break;
+            }
+        }
+    } else {
+        printf("\n[TLS 1.3] Initial setup connection finished. Grabbing Session Ticket...\n");
     }
 
 #if defined(WOLFSSL_TLS13)
@@ -5411,6 +5456,7 @@ client_test(void* args)
 #ifndef NO_SESSION_CACHE
     if (resumeSession)
     {
+        is_resuming = 1;
         session = wolfSSL_get1_session(ssl);
     }
 #endif
@@ -5486,6 +5532,7 @@ client_test(void* args)
 #ifndef NO_SESSION_CACHE
     if (resumeSession)
     {
+        is_resuming = 1;
         sslResume = wolfSSL_new(ctx);
         if (sslResume == NULL)
         {
@@ -5729,20 +5776,43 @@ client_test(void* args)
 #endif /* HAVE_SECURE_RENEGOTIATION */
 
         XMEMSET(msg, 0, sizeof(msg));
-        if (sendGET)
-        {
-            msgSz = (int)XSTRLEN(kHttpGetMsg);
-            XMEMCPY(msg, kHttpGetMsg, (size_t)msgSz);
-        }
-        else
-        {
-            msgSz = (int)XSTRLEN(kResumeMsg);
-            XMEMCPY(msg, kResumeMsg, (size_t)msgSz);
-        }
+        printf("\n=======================================================\n");
+        printf(" TLS 1.3 RESUMED Session Established! (Zero QKD overhead)\n");
+        printf(" Type your messages below. Type 'quit' to close tunnel.\n");
+        printf("=======================================================\n\n");
 
-        (void)
-            ClientWriteRead(sslResume, msg, msgSz, reply, sizeof(reply) - 1, sendGET, " resume", 0);
+        while (1) {
+            XMEMSET(msg, 0, sizeof(msg)); 
+            printf("Client (Resumed) > ");
+            
+            if (fgets(msg, sizeof(msg), stdin) == NULL) break;
 
+            msgSz = (int)XSTRLEN(msg);
+            if (msgSz > 0 && msg[msgSz - 1] == '\n') {
+                msg[msgSz - 1] = '\0';
+                msgSz--;
+            }
+
+            if (msgSz == 0) continue;
+
+            err = ClientWrite(sslResume, msg, msgSz, "", exitWithRet);
+            if (err != 0) {
+                printf("\n[TLS ERROR] Failed to send message.\n");
+                break;
+            }
+
+            if (strncmp(msg, "quit", 4) == 0) {
+                printf("Closing resumed session gracefully...\n");
+                break;
+            }
+
+            XMEMSET(reply, 0, sizeof(reply));
+            err = ClientRead(sslResume, reply, sizeof(reply) - 1, 1, "Server (IoT) > ", exitWithRet);
+            if (err != 0) {
+                printf("\n[TLS ERROR] Failed to read reply.\n");
+                break;
+            }
+        }
         ret = wolfSSL_shutdown(sslResume);
         if (wc_shutdown && ret == WOLFSSL_SHUTDOWN_NOT_DONE)
         {
