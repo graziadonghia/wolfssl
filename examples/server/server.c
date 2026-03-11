@@ -1747,7 +1747,7 @@ static int
 fetch_qkd_key_from_kms(const char* key_id, byte* out_key_material)
 {   
     struct timeval t0, t1;
-    printf("[QKD-KMS] Server requesting dec_keys for ID: %s\n", key_id);
+    ////printf("[QKD-KMS] Server requesting dec_keys for ID: %s\n", key_id);
 
     // Must match Bob's script exactly: {"key_IDs": [{"key_ID": "UUID"}]}
     char json_body[512];
@@ -1757,7 +1757,7 @@ fetch_qkd_key_from_kms(const char* key_id, byte* out_key_material)
     // ----- HMAC-SHA384 AUTHENTICATION ---
     gettimeofday(&t0, NULL);
     const byte KMS_SHARED_SECRET[] = "ServerSecretIoTKey384BitQuantumSafe1234567890123";
-    printf("[QKD-KMS] Computing HMAC-SHA384 of request body for authentication...\n");
+    ////printf("[QKD-KMS] Computing HMAC-SHA384 of request body for authentication...\n");
     Hmac hmac;
     byte mac_tag[WC_SHA384_DIGEST_SIZE]; // 48 bytes
     char hex_mac[WC_SHA384_DIGEST_SIZE * 2 + 1];
@@ -1782,7 +1782,7 @@ fetch_qkd_key_from_kms(const char* key_id, byte* out_key_material)
             json_body);
     gettimeofday(&t1, NULL);
     current_m1_3_1_auth_us = timer_diff_us(&t0, &t1);
-    printf("[QKD-KMS] HMAC computation took %ld microseconds.\n", current_m1_3_1_auth_us);
+    //printf("[QKD-KMS] HMAC computation took %ld microseconds.\n", current_m1_3_1_auth_us);
     #if IOT_TESTBED
     unsigned char dummy_qkd_key[32] = {0x00, 0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07,
                                        0x08, 0x09, 0x0A, 0x0B, 0x0C, 0x0D, 0x0E, 0x0F,
@@ -1790,10 +1790,10 @@ fetch_qkd_key_from_kms(const char* key_id, byte* out_key_material)
                                        0x18, 0x19, 0x1A, 0x1B, 0x1C, 0x1D, 0x1E, 0x1F};
     
     memcpy(out_key_material, dummy_qkd_key, 32);
-    printf("[QKD-KMS] IOT_TESTBED defined. Bypassing HTTP fetch. Mock Key injected.\n");
+    //printf("[QKD-KMS] IOT_TESTBED defined. Bypassing HTTP fetch. Mock Key injected.\n");
 
     #else
-    printf("[QKD-KMS] Sending HTTP request to KMS...\n");
+    //printf("[QKD-KMS] Sending HTTP request to KMS...\n");
     int sock = socket(AF_INET, SOCK_STREAM, 0);
     struct sockaddr_in kms_addr;
     kms_addr.sin_family = AF_INET;
@@ -1802,7 +1802,7 @@ fetch_qkd_key_from_kms(const char* key_id, byte* out_key_material)
 
     if (connect(sock, (struct sockaddr*)&kms_addr, sizeof(kms_addr)) < 0)
     {
-        printf("[QKD-KMS] FATAL: SAE cannot connect to KMS at 172.30.0.100:81\n");
+        //printf("[QKD-KMS] FATAL: SAE cannot connect to KMS at 172.30.0.100:81\n");
         return -1;
     }
 
@@ -1843,19 +1843,19 @@ fetch_qkd_key_from_kms(const char* key_id, byte* out_key_material)
     {
         if (strstr(response, "HTTP/1.1 401 Unauthorized"))
         {
-            printf("[QKD-KMS] ERROR: KMS rejected authentication. Check shared secret and HMAC.\n");
+            //printf("[QKD-KMS] ERROR: KMS rejected authentication. Check shared secret and HMAC.\n");
         }
         else if (strstr(response, "HTTP/1.1 406 Not Acceptable"))
         {
-            printf("[QKD-KMS] ERROR: KMS did not find the requested key ID.\n");
+            //printf("[QKD-KMS] ERROR: KMS did not find the requested key ID.\n");
         }
         else if (strstr(response, "HTTP/1.1 404 Not Found"))
         {
-            printf("[QKD-KMS] ERROR: KMS endpoint not found. Check URL and API version.\n");
+            //printf("[QKD-KMS] ERROR: KMS endpoint not found. Check URL and API version.\n");
         }
         else
         {
-            printf("[QKD-KMS] ERROR: Unexpected HTTP response from KMS:\n%s\n", response);
+            //printf("[QKD-KMS] ERROR: Unexpected HTTP response from KMS:\n%s\n", response);
         }
         return -1;
     }
@@ -1877,7 +1877,7 @@ fetch_qkd_key_from_kms(const char* key_id, byte* out_key_material)
     word32 outLen = 32;
     if (Base64_Decode((byte*)b64_key, (word32)b64_len, out_key_material, &outLen) != 0)
     {
-        printf("[QKD-KMS] ERROR: Bob failed base64 decoding.\n");
+        //printf("[QKD-KMS] ERROR: Bob failed base64 decoding.\n");
         return -1;
     }
     #endif
@@ -1904,7 +1904,7 @@ qkd_psk_server_tls13_cb(WOLFSSL* ssl,
     // Use the new fetch function
     if (fetch_qkd_key_from_kms(identity, key) != 0)
     {
-        printf("[QKD-KMS] Bob failed to sync key. Handshake will abort.\n");
+        //printf("[QKD-KMS] Bob failed to sync key. Handshake will abort.\n");
         return 0;
     }
 
@@ -1933,8 +1933,8 @@ qkd_psk_server_cs_cb(WOLFSSL* ssl,
 
     if (strncmp(identity, "QKD_KEY_ID_001", 14) == 0)
     {
-        printf("[QKD-KMS] Authenticating to Server KMS via HMAC-SHA256...\n");
-        printf("[QKD-KMS] Fetching matching QKD Key...\n");
+        //printf("[QKD-KMS] Authenticating to Server KMS via HMAC-SHA256...\n");
+        //printf("[QKD-KMS] Fetching matching QKD Key...\n");
 
         // Fill the key buffer with the exact same 32 bytes the client generated
         memset(key, 0xAB, 32);
@@ -1942,7 +1942,7 @@ qkd_psk_server_cs_cb(WOLFSSL* ssl,
         return 32; // Success: Return key length
     }
 
-    printf("[QKD-KMS] Unknown Key ID. Handshake will fail.\n");
+    //printf("[QKD-KMS] Unknown Key ID. Handshake will fail.\n");
     return 0; // Fail: Unknown Key ID
 }
 
@@ -2981,6 +2981,10 @@ server_test(void* args)
     myoptind = 0; /* reset for test cases */
 #endif /* !WOLFSSL_VXWORKS */
 
+    // ===========================================================
+    // IOT HARDCODE: force the server to accept 
+    // ===========================================================
+    loops = 1000;
     /* Can only use DTLS over UDP or SCTP, can't do both. */
     if (dtlsUDP && dtlsSCTP)
     {
@@ -4263,8 +4267,30 @@ server_test(void* args)
                     }
                 } while (err == WC_NO_ERR_TRACE(WC_PENDING_E) || ret > 0);
             }
-#endif
+#endif      
+            struct timeval t_tls_start, t_tls_end;
+            current_m1_3_1_auth_us = 0;
+
+            // 1. time server-side TLS handshake
+            gettimeofday(&t_tls_start, NULL);
             WOLFSSL_ASYNC_WHILE_PENDING(ret = SSL_accept(ssl), ret != WOLFSSL_SUCCESS);
+            gettimeofday(&t_tls_end, NULL);
+
+            // inject CSV output logic
+            long tls_hs_us = timer_diff_us(&t_tls_start, &t_tls_end);
+        long qkd_auth_us = current_m1_3_1_auth_us;
+        long pq_generic_us = tls_hs_us - qkd_auth_us;
+
+        // Print CSV Header on first run
+        if (cnt == 0) {
+            printf("\nrun_id,tls_handshake_ms,kms_auth_ms,pq_generic_ms\n");
+        }
+        // Print actual metrics
+        printf("%d,%.3f,%.3f,%.3f\n",
+               cnt + 1,
+               tls_hs_us / 1000.0,
+               qkd_auth_us / 1000.0,
+               pq_generic_us / 1000.0);
         }
 #else
         if (nonBlocking)

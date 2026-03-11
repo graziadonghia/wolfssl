@@ -753,6 +753,11 @@ ClientBenchmarkConnections(WOLFSSL_CTX *ctx,
 
         for (i = 0; i < times; i++)
         {
+            struct timeval t_start, t_tcp, t_tls;
+            current_m1_3_1_auth_us = 0;
+
+            // 1. TCP SETUP (M1.1)
+            gettimeofday(&t_start, NULL);
             SOCKET_T sockfd;
             WOLFSSL *ssl;
 
@@ -788,7 +793,7 @@ ClientBenchmarkConnections(WOLFSSL_CTX *ctx,
 #endif
 
             tcp_connect(&sockfd, host, port, dtlsUDP, dtlsSCTP, ssl);
-
+            gettimeofday(&t_tcp, NULL);
             if (wolfSSL_set_fd(ssl, sockfd) != WOLFSSL_SUCCESS)
             {
                 err_sys("error in setting fd");
@@ -800,15 +805,38 @@ ClientBenchmarkConnections(WOLFSSL_CTX *ctx,
                 char buffer[WOLFSSL_MAX_ERROR_SZ];
                 EarlyData(ctx, ssl, kEarlyMsg, sizeof(kEarlyMsg) - 1, buffer);
             }
-#endif
+#endif  
+            // 2. TLS HANDSHAKE (M1.4)
             WOLFSSL_ASYNC_WHILE_PENDING(ret = wolfSSL_connect(ssl), ret != WOLFSSL_SUCCESS);
 #ifdef WOLFSSL_EARLY_DATA
             EarlyDataStatus(ssl);
-#endif
+#endif  
+            gettimeofday(&t_tls, NULL);
             if (ret != WOLFSSL_SUCCESS)
             {
                 err_sys("SSL_connect failed");
             }
+
+            // inject csv output logic
+            long tcp_setup_us = timer_diff_us(&t_start, &t_tcp);
+            long tls_handshake_us = timer_diff_us(&t_tcp, &t_tls);
+            long qkd_auth_us = current_m1_3_1_auth_us;
+
+            // overall PQ + TLS match
+            long pq_generic_us = tls_handshake_us - qkd_auth_us;
+
+            // print CSV header on first run
+            if (i == 0) {
+                printf("\nrun_id,tcp_setup_ms,tls_handshake_ms,kms_auth_ms,pq_generic_ms\n");
+            }
+
+            // print actual metrics
+            printf("%d,%.6f,%.6f,%.6f,%.6f\n",
+                   i + 1,
+                   tcp_setup_us / 1000.0,
+                   tls_handshake_us / 1000.0,
+                   qkd_auth_us / 1000.0,
+                   pq_generic_us / 1000.0);
 #ifdef WOLFSSL_TLS13
 #ifndef NO_SESSION_CACHE
             if (version >= 4 && resumeSession && !benchResume)
@@ -2298,7 +2326,7 @@ fetch_qkd_key_from_kms(char *out_key_id, byte *out_key_material)
         {
             memcpy(out_key_material, cached_key_material, 32);
         }
-        printf("Using cached QKD key for KMS authentication...\n");
+        // printf("Using cached QKD key for KMS authentication...\n");
         return 0; // success
     }
     const char *receiver_uuid = "bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb";
@@ -2314,7 +2342,7 @@ fetch_qkd_key_from_kms(char *out_key_id, byte *out_key_material)
     // ----- HMAC-SHA384 AUTHENTICATION ---
     gettimeofday(&t0, NULL);
     const byte KMS_SHARED_SECRET[] = "ClientSecretIoTKey384BitQuantumSafe1234567890123";
-    printf("[QKD-KMS] Computing HMAC-SHA384 of request body for authentication...\n");
+    //printf("[QKD-KMS] Computing HMAC-SHA384 of request body for authentication...\n");
     Hmac hmac;
     byte mac_tag[WC_SHA384_DIGEST_SIZE]; // 48 bytes
     char hex_mac[WC_SHA384_DIGEST_SIZE * 2 + 1];
@@ -2342,7 +2370,7 @@ fetch_qkd_key_from_kms(char *out_key_id, byte *out_key_material)
                 json_body);
     gettimeofday(&t1, NULL);
     current_m1_3_1_auth_us = timer_diff_us(&t0, &t1);
-    printf("[QKD-KMS] HMAC computation took %ld microseconds.\n", current_m1_3_1_auth_us);
+    //printf("[QKD-KMS] HMAC computation took %ld microseconds.\n", current_m1_3_1_auth_us);
     #if IOT_TESTBED
     unsigned char dummy_qkd_key[32] = {0x00, 0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07,
                                       0x08, 0x09, 0x0A, 0x0B, 0x0C, 0x0D, 0x0E, 0x0F,
@@ -2350,7 +2378,7 @@ fetch_qkd_key_from_kms(char *out_key_id, byte *out_key_material)
                                       0x18, 0x19, 0x1A, 0x1B, 0x1C, 0x1D, 0x1E, 0x1F};
     memcpy(cached_key_material, dummy_qkd_key, 32);
     strcpy(cached_key_id, "dummy-key-id-1234");
-    printf("[QKD-KMS] IOT_TESTBED is defined, using dummy QKD key and skipping actual KMS fetch.\n");
+    //printf("[QKD-KMS] IOT_TESTBED is defined, using dummy QKD key and skipping actual KMS fetch.\n");
     
     #else
     int sock = socket(AF_INET, SOCK_STREAM, 0);
@@ -2366,10 +2394,10 @@ fetch_qkd_key_from_kms(char *out_key_id, byte *out_key_material)
 
     if (connect(sock, (struct sockaddr *)&kms_addr, sizeof(kms_addr)) < 0)
     {
-        printf("[QKD-KMS] FATAL: Connection to local KMS failed.\n");
+        //printf("[QKD-KMS] FATAL: Connection to local KMS failed.\n");
         return -1;
     }
-    printf("[QKD-KMS] Sending HTTP request to KMS...\n");
+    //printf("[QKD-KMS] Sending HTTP request to KMS...\n");
     send(sock, request, strlen(request), 0);
     char response[4096];
     memset(response, 0, sizeof(response));
@@ -2409,15 +2437,15 @@ fetch_qkd_key_from_kms(char *out_key_id, byte *out_key_material)
     {
         if (strstr(response, "HTTP/1.1 401 Unauthorized"))
         {
-            printf("[QKD-KMS] Authentication failed. Check shared secret and HMAC.\n");
+            //printf("[QKD-KMS] Authentication failed. Check shared secret and HMAC.\n");
         }
         else if (strstr(response, "HTTP/1.1 406 Not Acceptable"))
         {
-            printf("[QKD-KMS] KMS cannot meet the QoS requirements\n");
+            //printf("[QKD-KMS] KMS cannot meet the QoS requirements\n");
         }
         else
         {
-            printf("[QKD-KMS] Failed to fetch key from KMS. HTTP response:\n%s\n", response);
+            //printf("[QKD-KMS] Failed to fetch key from KMS. HTTP response:\n%s\n", response);
         }
     }
 
@@ -2461,11 +2489,11 @@ fetch_qkd_key_from_kms(char *out_key_id, byte *out_key_material)
     if (Base64_Decode((byte *)key_b64, (word32)key_b64_len, cached_key_material, &outLen) != 0 ||
         outLen != 32)
     {
-        printf("[QKD-KMS] FATAL: Failed to decode base64 key material from KMS.\n");
+        //printf("[QKD-KMS] FATAL: Failed to decode base64 key material from KMS.\n");
         return -1;
     }
 
-    printf("[QKD-KMS] Successfully fetched QKD key from KMS! ID: %s\n", cached_key_id);
+    //printf("[QKD-KMS] Successfully fetched QKD key from KMS! ID: %s\n", cached_key_id);
     #endif
     return 0;
 }
@@ -2503,11 +2531,7 @@ qkd_psk_client_cs_cb(WOLFSSL *ssl,
             return 0;
         }
         key_already_fetched = 1;
-        printf("[QKD-KMS] QKD PSK Injected! ID: %s\n\n", cached_key_id);
-    }
-    else
-    {
-        printf("Using cached QKD key for wolfSSL internal math...\n");
+        //printf("[QKD-KMS] QKD PSK Injected! ID: %s\n\n", cached_key_id);
     }
     // 2. Inject into TLS
     strncpy(identity, cached_key_id, max_identity_len);
@@ -2536,7 +2560,7 @@ qkd_psk_client_tls13_cb(WOLFSSL *ssl,
     (void)ciphersuite;
     if (is_resuming)
     {
-        printf("[TLS 1.3] Resumption active. Bypassing QKD fetch and using Session Ticket.\n");
+        //printf("[TLS 1.3] Resumption active. Bypassing QKD fetch and using Session Ticket.\n");
         return 0; // Returning 0 forces wolfSSL to use the cached ticket!
     }
     // --------------------------
@@ -2548,11 +2572,7 @@ qkd_psk_client_tls13_cb(WOLFSSL *ssl,
             return 0;
         }
         key_already_fetched = 1;
-        printf("[QKD-KMS] QKD PSK Injected! ID: %s\n\n", identity);
-    }
-    else
-    {
-        printf("Using cached QKD key for solfSSL internal math...\n");
+        //printf("[QKD-KMS] QKD PSK Injected! ID: %s\n\n", identity);
     }
     // 2. Inject into TLS
     strncpy(identity, cached_key_id, max_identity_len);
@@ -3574,6 +3594,10 @@ client_test(void *args)
     myoptind = 0; /* reset for test cases */
 #endif            /* !WOLFSSL_VXWORKS */
 
+    // ================================================
+    // IOT HARDCODE: force the benchmark loop
+    // ================================================
+    benchmark = 1000;
     if (externalTest)
     {
         /* detect build cases that wouldn't allow test against wolfssl.com */
@@ -4453,7 +4477,8 @@ client_test(void *args)
                                                                       earlyData);
         wolfSSL_CTX_free(ctx);
         ctx = NULL;
-        XEXIT_T(EXIT_SUCCESS);
+        // by commenting this we gracefully jump to the end of the function instead of calling exit()
+        //XEXIT_T(EXIT_SUCCESS); 
     }
 
     if (throughput)
