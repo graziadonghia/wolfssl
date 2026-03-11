@@ -1731,22 +1731,11 @@ server_srtp_test(WOLFSSL* ssl, func_args* args)
 /* ========================================================= */
 
 // Fetches the matching key material from Bob's KMS using the ID sent by Alice
+#define IOT_TESTBED 1
 static int
 fetch_qkd_key_from_kms(const char* key_id, byte* out_key_material)
 {
     printf("[QKD-KMS] Server requesting dec_keys for ID: %s\n", key_id);
-
-    int sock = socket(AF_INET, SOCK_STREAM, 0);
-    struct sockaddr_in kms_addr;
-    kms_addr.sin_family = AF_INET;
-    kms_addr.sin_port = htons(81);
-    inet_pton(AF_INET, "172.30.0.100", &kms_addr.sin_addr);
-
-    if (connect(sock, (struct sockaddr*)&kms_addr, sizeof(kms_addr)) < 0)
-    {
-        printf("[QKD-KMS] FATAL: SAE cannot connect to KMS at 172.30.0.100:81\n");
-        return -1;
-    }
 
     // Must match Bob's script exactly: {"key_IDs": [{"key_ID": "UUID"}]}
     char json_body[512];
@@ -1767,9 +1756,6 @@ fetch_qkd_key_from_kms(const char* key_id, byte* out_key_material)
     {
         sprintf(&hex_mac[i * 2], "%02x", mac_tag[i]);
     }
-
-    printf("[QKD-KMS] Sending HTTP request to KMS...\n");
-
     sprintf(request,
             "POST /api/v1/keys/aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa/dec_keys HTTP/1.1\r\n"
             "Host: 172.30.0.100\r\n"
@@ -1781,6 +1767,28 @@ fetch_qkd_key_from_kms(const char* key_id, byte* out_key_material)
             hex_mac,
             (int)strlen(json_body),
             json_body);
+    #if IOT_TESTBED
+    unsigned char dummy_qkd_key[32] = {0x00, 0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07,
+                                       0x08, 0x09, 0x0A, 0x0B, 0x0C, 0x0D, 0x0E, 0x0F,
+                                       0x10, 0x11, 0x12, 0x13, 0x14, 0x15, 0x16, 0x17,
+                                       0x18, 0x19, 0x1A, 0x1B, 0x1C, 0x1D, 0x1E, 0x1F};
+    
+    memcpy(out_key_material, dummy_qkd_key, 32);
+    printf("[QKD-KMS] IOT_TESTBED defined. Bypassing HTTP fetch. Mock Key injected.\n");
+
+    #else
+    printf("[QKD-KMS] Sending HTTP request to KMS...\n");
+    int sock = socket(AF_INET, SOCK_STREAM, 0);
+    struct sockaddr_in kms_addr;
+    kms_addr.sin_family = AF_INET;
+    kms_addr.sin_port = htons(81);
+    inet_pton(AF_INET, "172.30.0.100", &kms_addr.sin_addr);
+
+    if (connect(sock, (struct sockaddr*)&kms_addr, sizeof(kms_addr)) < 0)
+    {
+        printf("[QKD-KMS] FATAL: SAE cannot connect to KMS at 172.30.0.100:81\n");
+        return -1;
+    }
 
     send(sock, request, strlen(request), 0);
 
@@ -1856,7 +1864,7 @@ fetch_qkd_key_from_kms(const char* key_id, byte* out_key_material)
         printf("[QKD-KMS] ERROR: Bob failed base64 decoding.\n");
         return -1;
     }
-
+    #endif
     return 0; // Success
 }
 

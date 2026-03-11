@@ -2270,7 +2270,9 @@ static int key_already_fetched = 0;
 static int is_resuming = 0;
 static char cached_key_id[128];
 static byte cached_key_material[32];
+#define IOT_TESTBED 1
 
+ 
 static int
 fetch_qkd_key_from_kms(char *out_key_id, byte *out_key_material)
 {
@@ -2290,24 +2292,6 @@ fetch_qkd_key_from_kms(char *out_key_id, byte *out_key_material)
     const char *receiver_uuid = "bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb";
     double target_epsilon = 1.0;
     int key_size = 256;
-
-    printf("\n[QKD-KMS] Client SAE requesting %d-bit key from 172.20.0.100\n", key_size);
-    int sock = socket(AF_INET, SOCK_STREAM, 0);
-    if (sock < 0)
-    {
-        perror("socket");
-        return -1;
-    }
-    struct sockaddr_in kms_addr;
-    kms_addr.sin_family = AF_INET;
-    kms_addr.sin_port = htons(81);
-    inet_pton(AF_INET, "172.20.0.100", &kms_addr.sin_addr);
-
-    if (connect(sock, (struct sockaddr *)&kms_addr, sizeof(kms_addr)) < 0)
-    {
-        printf("[QKD-KMS] FATAL: Connection to local KMS failed.\n");
-        return -1;
-    }
 
     char json_body[256];
     char request[1024];
@@ -2329,22 +2313,48 @@ fetch_qkd_key_from_kms(char *out_key_id, byte *out_key_material)
     {
         sprintf(&hex_mac[i * 2], "%02x", mac_tag[i]);
     }
+    
+        // inject into HTTP header
+        sprintf(request,
+                "POST /api/v1/keys/%s/enc_keys HTTP/1.1\r\n"
+                "Host: 172.20.0.100\r\n"
+                "Content-Type: application/json\r\n"
+                "Authorization: HMAC-SHA384 %s\r\n"
+                "Content-Length: %d\r\n"
+                "Connection: close\r\n\r\n"
+                "%s",
+                receiver_uuid,
+                hex_mac,
+                (int)strlen(json_body),
+                json_body);
+    printf("\n[QKD-KMS] Client SAE requesting %d-bit key from 172.20.0.100\n", key_size);
+    #if IOT_TESTBED
+    unsigned char dummy_qkd_key[32] = {0x00, 0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07,
+                                      0x08, 0x09, 0x0A, 0x0B, 0x0C, 0x0D, 0x0E, 0x0F,
+                                      0x10, 0x11, 0x12, 0x13, 0x14, 0x15, 0x16, 0x17,
+                                      0x18, 0x19, 0x1A, 0x1B, 0x1C, 0x1D, 0x1E, 0x1F};
+    memcpy(cached_key_material, dummy_qkd_key, 32);
+    strcpy(cached_key_id, "dummy-key-id-1234");
+    printf("[QKD-KMS] IOT_TESTBED is defined, using dummy QKD key and skipping actual KMS fetch.\n");
+    
+    #else
+    int sock = socket(AF_INET, SOCK_STREAM, 0);
+    if (sock < 0)
+    {
+        perror("socket");
+        return -1;
+    }
+    struct sockaddr_in kms_addr;
+    kms_addr.sin_family = AF_INET;
+    kms_addr.sin_port = htons(81);
+    inet_pton(AF_INET, "172.20.0.100", &kms_addr.sin_addr);
 
+    if (connect(sock, (struct sockaddr *)&kms_addr, sizeof(kms_addr)) < 0)
+    {
+        printf("[QKD-KMS] FATAL: Connection to local KMS failed.\n");
+        return -1;
+    }
     printf("[QKD-KMS] Sending HTTP request to KMS...\n");
-
-    // inject into HTTP header
-    sprintf(request,
-            "POST /api/v1/keys/%s/enc_keys HTTP/1.1\r\n"
-            "Host: 172.20.0.100\r\n"
-            "Content-Type: application/json\r\n"
-            "Authorization: HMAC-SHA384 %s\r\n"
-            "Content-Length: %d\r\n"
-            "Connection: close\r\n\r\n"
-            "%s",
-            receiver_uuid,
-            hex_mac,
-            (int)strlen(json_body),
-            json_body);
     send(sock, request, strlen(request), 0);
     char response[4096];
     memset(response, 0, sizeof(response));
@@ -2441,6 +2451,7 @@ fetch_qkd_key_from_kms(char *out_key_id, byte *out_key_material)
     }
 
     printf("[QKD-KMS] Successfully fetched QKD key from KMS! ID: %s\n", cached_key_id);
+    #endif
     return 0;
 }
 
@@ -2471,6 +2482,7 @@ qkd_psk_client_cs_cb(WOLFSSL *ssl,
     if (key_already_fetched == 0)
     {
         // 1. Fetch from KMS
+        
         if (fetch_qkd_key_from_kms(cached_key_id, cached_key_material) != 0)
         {
             return 0;
