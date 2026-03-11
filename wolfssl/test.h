@@ -1132,8 +1132,7 @@ static WC_INLINE int PasswordCallBack(char* passwd, int sz, int rw, void* userda
 static const char* client_showpeer_msg[][9] = {
     /* English */
     {
-        "Alternate cert chain used",
-        NULL
+        "Alternate cert chain used"
     },
 #ifndef NO_MULTIBYTE_PRINT
     /* Japanese */

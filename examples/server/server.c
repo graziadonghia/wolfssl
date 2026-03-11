@@ -76,6 +76,10 @@ static const char* wolfsentry_config_path = NULL;
 #include <wolfssl/error-ssl.h>
 #include <wolfssl/test.h>
 
+// PQ certificates hardcoded
+#include "certs/pq_certs/mldsa65_server_crt.h"
+#include "certs/pq_certs/mldsa65_server_key.h"
+
 // =================== testing =====================
 #include <sys/time.h>
 
@@ -2985,6 +2989,14 @@ server_test(void* args)
     // IOT HARDCODE: force the server to accept 
     // ===========================================================
     loops = 1000;
+    version = 4;                  // -v 4
+    useAnyAddr = 1;               // -b
+    usePqc = 1;                   // --pqc
+    pqcAlg = (char *)"ML_KEM_1024";       // ML_KEM_1024
+    onlyKeyShare = 3;             // Required internal flag for PQC KeyShares
+    usePsk = 1;                   // -s
+    usePskPlus = 1;               // -j
+    cipherList = (char *)"TLS13-AES256-GCM-SHA384"; // -l
     /* Can only use DTLS over UDP or SCTP, can't do both. */
     if (dtlsUDP && dtlsSCTP)
     {
@@ -3202,7 +3214,21 @@ server_test(void* args)
     {
         err_sys_ex(catastrophic, "unable to get ctx");
     }
+    // ==========================================
+    // IOT HARDCODE: Load PQ Certs from RAM
+    // ==========================================
+    if (wolfSSL_CTX_use_certificate_buffer(ctx, mldsa65_server_crt, 
+        mldsa65_server_crt_len, WOLFSSL_FILETYPE_PEM) != WOLFSSL_SUCCESS) {
+        err_sys("Failed to load server cert buffer");
+    }
+    
+    if (wolfSSL_CTX_use_PrivateKey_buffer(ctx, mldsa65_server_key, 
+        mldsa65_server_key_len, WOLFSSL_FILETYPE_PEM) != WOLFSSL_SUCCESS) {
+        err_sys("Failed to load server key buffer");
+    }
 
+    // Tell the rest of server.c NOT to try and load files from a hard drive
+    loadCertKeyIntoSSLObj = 0;
     if (minVersion != SERVER_INVALID_VERSION)
     {
 #ifdef WOLFSSL_DTLS
@@ -4291,7 +4317,7 @@ server_test(void* args)
         }
         
         // 4. Print the expanded actual metrics
-        printf("%d,%s,%s,%s,%s,%.3f,%.3f,%.3f\n",
+        printf("%d,%s,%s,%s,%s,%.3f,%.6f,%.3f\n",
                cnt + 1,
                negotiated_cipher,
                pq_kem_alg,
