@@ -117,13 +117,11 @@ static int devId = INVALID_DEVID;
  * by the client. */
 
 #ifndef WOLFSSL_ALT_TEST_STRINGS
-#if 0
 static const char kReplyMsg[] = "I hear you fa shizzle!";
-#endif 
+ 
 #else
-#if 0
+
 static const char kReplyMsg[] = "I hear you fa shizzle!\n";
-#endif
 #endif
 
 #if 0
@@ -592,7 +590,6 @@ ServerEchoData(SSL* ssl, int clientfd, int echoData, int block, size_t throughpu
 
     return 0;
 }
-# if 0
 static void
 ServerRead(WOLFSSL* ssl, char* input, int inputLen)
 {
@@ -702,7 +699,7 @@ ServerRead(WOLFSSL* ssl, char* input, int inputLen)
         printf("Client message: %s\n", input);
     }
 }
-#endif
+
 static void
 ServerWrite(WOLFSSL* ssl, const char* output, int outputLen)
 {
@@ -4473,7 +4470,7 @@ server_test(void* args)
 
         if (echoData == 0 && throughput == 0)
         {
-            //ServerRead(ssl, input, sizeof(input) - 1);
+            ServerRead(ssl, input, sizeof(input) - 1);
             err = SSL_get_error(ssl, 0);
         }
 
@@ -4621,68 +4618,18 @@ server_test(void* args)
             (void)useWebServerMsg;
 
             /* ======================================================= */
-            /* QKDNetSim: BIDIRECTIONAL SERVER LOOP                    */
+            /* QKDNetSim: AUTOMATED SERVER REPLY                       */
             /* ======================================================= */
             #if defined(WOLFSSL_TLS13) && defined(HAVE_SESSION_TICKET)
             if (sendTicket) {
                 if (wolfSSL_send_SessionTicket(ssl) != WOLFSSL_SUCCESS) {
                     LOG_ERROR("Sending new session ticket failed\n");
                 }
-                else {
-                    printf("[TLS 1.3] New session ticket successfully sent to Alice.\n");
-                }
             }
             #endif
-            printf("\n=======================================================\n");
-            printf(" TLS 1.3 Triple-Hybrid Session Established with Client!\n");
-            printf(" Waiting for Client's first message...\n");
-            printf("=======================================================\n\n");
-
-            while (1)
-            {
-                // 1. Wait and read data from Alice
-                XMEMSET(input, 0, sizeof(input));
-                err = 0;
-                ret = wolfSSL_read(ssl, input, sizeof(input) - 1);
-
-                if (ret <= 0) {
-                    err = wolfSSL_get_error(ssl, ret);
-                    if (err == WOLFSSL_ERROR_ZERO_RETURN) {
-                        printf("\n[TLS] Alice closed the connection gracefully.\n");
-                        break;
-                    }
-                    if (err != WOLFSSL_ERROR_WANT_READ && err != WOLFSSL_ERROR_WANT_WRITE) {
-                        printf("\n[TLS ERROR] Connection broken. Error code: %d\n", err);
-                        break;
-                    }
-                } else {
-                    input[ret] = '\0'; // Null-terminate the string
-                    
-                    // Check if Alice sent the quit command
-                    if (strncmp(input, "quit", 4) == 0) {
-                        printf("\n[TLS] Client requested session termination. Closing...\n");
-                        break;
-                    }
-                    
-                    printf("Client (IoT) > %s\n", input);
-
-                    // 2. Bob types a reply
-                    char reply_msg[256];
-                    XMEMSET(reply_msg, 0, sizeof(reply_msg));
-                    printf("Server (IoT) > ");
-                    
-                    if (fgets(reply_msg, sizeof(reply_msg), stdin) == NULL) break;
-                    
-                    int reply_sz = (int)XSTRLEN(reply_msg);
-                    if (reply_sz > 0 && reply_msg[reply_sz - 1] == '\n') {
-                        reply_msg[reply_sz - 1] = '\0';
-                        reply_sz--;
-                    }
-
-                    // 3. Send Bob's reply to Alice
-                    ServerWrite(ssl, reply_msg, reply_sz);
-                }
-            }
+            
+            // Automatically send the response
+            ServerWrite(ssl, kReplyMsg, (int)XSTRLEN(kReplyMsg));
             /* ======================================================= */
         }
         else if (err == 0 || err == WOLFSSL_ERROR_ZERO_RETURN)
