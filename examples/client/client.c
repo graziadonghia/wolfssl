@@ -2549,7 +2549,6 @@ qkd_psk_client_cs_cb(WOLFSSL *ssl,
     // 2. Inject into TLS
     strncpy(identity, cached_key_id, max_identity_len);
     memcpy(key, cached_key_material, 32);
-    printf("\n");
     // -------------------------------
     // corruption test: flip the first bit of the QKD key to see if it causes handshake failure (for
     // testing only, should be removed in production)
@@ -3610,6 +3609,7 @@ client_test(void *args)
     // ================================================
     // IOT HARDCODE: force the benchmark loop
     // ================================================
+    quieter = 1; // suppress messages
     benchmark = 1000;
     version = 4;                  // -v 4 (TLS 1.3)
     host = (char *)"192.168.122.166";     // -h (NOTE: Change this to your Server Node's IPv6/IP later!)
@@ -5141,7 +5141,7 @@ client_test(void *args)
         {
             printf("%02X", *pt);
         }
-        printf("\n");
+        //printf("\n");
         XFREE(rnd, NULL, DYNAMIC_TYPE_TMP_BUFFER);
     }
 #endif
@@ -5235,7 +5235,7 @@ client_test(void *args)
 
             printf("Sending CID is ");
             printBuffer(receivedCID, receivedCIDSz);
-            printf("\n");
+            //printf("\n");
         }
         else
         {

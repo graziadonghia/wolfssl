@@ -4367,7 +4367,7 @@ server_test(void* args)
             }
         }
 
-        showPeerEx(ssl, lng_index);
+        //showPeerEx(ssl, lng_index); 
         if (SSL_state(ssl) != 0)
         {
             err_sys_ex(runWithErrors, "SSL in error state");
