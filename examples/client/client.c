@@ -71,6 +71,7 @@ static const char *wolfsentry_config_path = NULL;
 
 // global variables to capture callback metrics for the CSV
 static long current_m1_3_1_auth_us = 0;
+static long qkd_overhead_us = 0;
 
 // helper function to calculate microseconds
 static long timer_diff_us(struct timeval *start, struct timeval *end) {
@@ -836,7 +837,7 @@ ClientBenchmarkConnections(WOLFSSL_CTX *ctx,
             const char *cert_sig_alg = "ML-DSA-87";
             // print CSV header on first run
             if (i == 0) {
-                printf("\nrun_id,ciphersuite,kem_alg,cert_pub_alg,cert_sig_alg,tcp_setup_ms,tls_handshake_ms,kms_auth_ms,pq_generic_ms\n");
+                printf("\nrun_id,ciphersuite,kem_alg,cert_pub_alg,cert_sig_alg,tcp_setup_ms,tls_handshake_ms,qkd_overhead_ms,pq_generic_ms\n");
             }
             
             // 4. Print the expanded actual metrics
@@ -848,7 +849,7 @@ ClientBenchmarkConnections(WOLFSSL_CTX *ctx,
                    cert_sig_alg,
                    tcp_setup_us / 1000.0,
                    tls_handshake_us / 1000.0,
-                   qkd_auth_us / 1000.0,
+                   qkd_overhead_us / 1000.0,
                    pq_generic_us / 1000.0);
 #ifdef WOLFSSL_TLS13
 #ifndef NO_SESSION_CACHE
@@ -2538,12 +2539,15 @@ qkd_psk_client_cs_cb(WOLFSSL *ssl,
     if (key_already_fetched == 0)
     {
         // 1. Fetch from KMS
-        
+        struct timeval t0, t1;
+        gettimeofday(&t0, NULL);
         if (fetch_qkd_key_from_kms(cached_key_id, cached_key_material) != 0)
         {
             return 0;
         }
         key_already_fetched = 1;
+        gettimeofday(&t1, NULL);
+        qkd_overhead_us = timer_diff_us(&t0, &t1);
         //printf("[QKD-KMS] QKD PSK Injected! ID: %s\n\n", cached_key_id);
     }
     // 2. Inject into TLS
@@ -2578,12 +2582,15 @@ qkd_psk_client_tls13_cb(WOLFSSL *ssl,
     // --------------------------
     if (key_already_fetched == 0)
     {
-        // 1. Fetch from KMS
+        struct timeval t0, t1;
+        gettimeofday(&t0, NULL);
         if (fetch_qkd_key_from_kms(cached_key_id, cached_key_material) != 0)
         {
             return 0;
         }
         key_already_fetched = 1;
+        gettimeofday(&t1, NULL);
+        qkd_overhead_us = timer_diff_us(&t0, &t1);
         //printf("[QKD-KMS] QKD PSK Injected! ID: %s\n\n", identity);
     }
     // 2. Inject into TLS

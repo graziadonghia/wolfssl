@@ -51,7 +51,7 @@
 #ifdef WOLFSSL_WOLFSENTRY_HOOKS
 #include <wolfsentry/wolfsentry.h>
 #if !defined(NO_FILESYSTEM) && !defined(WOLFSENTRY_NO_JSON)
-static const char* wolfsentry_config_path = NULL;
+static const char *wolfsentry_config_path = NULL;
 #endif
 #endif /* WOLFSSL_WOLFSENTRY_HOOKS */
 #if defined(WOLFSSL_MDK_ARM) || defined(WOLFSSL_KEIL_TCP_NET)
@@ -85,15 +85,17 @@ static const char* wolfsentry_config_path = NULL;
 
 // global variables to capture callback metrics for the CSV
 static long current_m1_3_1_auth_us = 0;
+static long qkd_overhead_us = 0;
 
 // helper function to calculate microseconds
-static long timer_diff_us(struct timeval *start, struct timeval *end) {
+static long timer_diff_us(struct timeval *start, struct timeval *end)
+{
     return (end->tv_sec - start->tv_sec) * 1000000L + (end->tv_usec - start->tv_usec);
 }
 
 #if !defined(NO_WOLFSSL_SERVER) && !defined(NO_TLS)
 
-#if defined(WOLFSSL_TLS13) && (defined(HAVE_ECC) || defined(HAVE_CURVE25519) ||                    \
+#if defined(WOLFSSL_TLS13) && (defined(HAVE_ECC) || defined(HAVE_CURVE25519) || \
                                defined(HAVE_CURVE448) || defined(HAVE_FFDHE_2048))
 #define CAN_FORCE_CURVE
 #endif
@@ -101,7 +103,7 @@ static long timer_diff_us(struct timeval *start, struct timeval *end) {
 struct group_info
 {
     word16 group;
-    const char* name;
+    const char *name;
 };
 static struct group_info group_id_to_text[] = {{WOLFSSL_ECC_SECP160K1, "SECP160K1"},
                                                {WOLFSSL_ECC_SECP160R1, "SECP160R1"},
@@ -133,7 +135,7 @@ static int devId = INVALID_DEVID;
 
 #ifndef WOLFSSL_ALT_TEST_STRINGS
 static const char kReplyMsg[] = "I hear you fa shizzle!";
- 
+
 #else
 
 static const char kReplyMsg[] = "I hear you fa shizzle!\n";
@@ -169,11 +171,11 @@ static int quieter = 0; /* Print fewer messages. This is helpful with overly
                          * ambitious log parsers. */
 static int lng_index = 0;
 
-#define LOG_ERROR(...)                                                                             \
-    do                                                                                             \
-    {                                                                                              \
-        if (!quieter)                                                                              \
-            fprintf(stderr, __VA_ARGS__);                                                          \
+#define LOG_ERROR(...)                    \
+    do                                    \
+    {                                     \
+        if (!quieter)                     \
+            fprintf(stderr, __VA_ARGS__); \
     } while (0)
 
 #ifdef WOLFSSL_CALLBACKS
@@ -183,14 +185,14 @@ Timeval srvTo;
 WOLFSSL_TIMEVAL srvTo;
 #endif
 static int
-srvHandShakeCB(HandShakeInfo* info)
+srvHandShakeCB(HandShakeInfo *info)
 {
     (void)info;
     return 0;
 }
 
 static int
-srvTimeoutCB(TimeoutInfo* info)
+srvTimeoutCB(TimeoutInfo *info)
 {
     (void)info;
     return 0;
@@ -200,7 +202,7 @@ srvTimeoutCB(TimeoutInfo* info)
 
 #ifndef NO_HANDSHAKE_DONE_CB
 static int
-myHsDoneCb(WOLFSSL* ssl, void* user_ctx)
+myHsDoneCb(WOLFSSL *ssl, void *user_ctx)
 {
     (void)user_ctx;
     (void)ssl;
@@ -213,7 +215,7 @@ myHsDoneCb(WOLFSSL* ssl, void* user_ctx)
 #endif
 
 static void
-err_sys_ex(int out, const char* msg)
+err_sys_ex(int out, const char *msg)
 {
     if (out == 1)
     { /* if server is running w/ -x flag, print error w/o exit */
@@ -293,9 +295,9 @@ typedef struct WOLFSSL_TEST_DTLS_CTX
 } WOLFSSL_TEST_DTLS_CTX;
 
 static WC_INLINE int
-PeekSeq(const char* buf, word32* seq)
+PeekSeq(const char *buf, word32 *seq)
 {
-    const char* c = buf + 3;
+    const char *c = buf + 3;
 
     if ((c[0] | c[1] | c[2] | c[3]) == 0)
     {
@@ -310,9 +312,9 @@ PeekSeq(const char* buf, word32* seq)
  *  return : nb bytes sent, or error
  */
 static int
-TestEmbedSendTo(WOLFSSL* ssl, char* buf, int sz, void* ctx)
+TestEmbedSendTo(WOLFSSL *ssl, char *buf, int sz, void *ctx)
 {
-    WOLFSSL_TEST_DTLS_CTX* dtlsCtx = (WOLFSSL_TEST_DTLS_CTX*)ctx;
+    WOLFSSL_TEST_DTLS_CTX *dtlsCtx = (WOLFSSL_TEST_DTLS_CTX *)ctx;
     int sd = dtlsCtx->wfd;
     int sent;
 
@@ -333,7 +335,7 @@ TestEmbedSendTo(WOLFSSL* ssl, char* buf, int sz, void* ctx)
     }
 
     sent =
-        (int)sendto(sd, buf, (size_t)sz, 0, (const SOCKADDR*)&dtlsCtx->peer.sa, dtlsCtx->peer.sz);
+        (int)sendto(sd, buf, (size_t)sz, 0, (const SOCKADDR *)&dtlsCtx->peer.sa, dtlsCtx->peer.sz);
 
     sent = TranslateReturnCode(sent, sd);
 
@@ -374,7 +376,7 @@ TestEmbedSendTo(WOLFSSL* ssl, char* buf, int sz, void* ctx)
 #endif /* WOLFSSL_DTLS && USE_WOLFSSL_IO */
 
 static int
-NonBlockingSSL_Accept(SSL* ssl)
+NonBlockingSSL_Accept(SSL *ssl)
 {
 #ifndef WOLFSSL_CALLBACKS
     int ret = SSL_accept(ssl);
@@ -474,16 +476,15 @@ NonBlockingSSL_Accept(SSL* ssl)
 }
 
 /* Echo number of bytes specified by -B arg */
-int
-ServerEchoData(SSL* ssl, int clientfd, int echoData, int block, size_t throughput)
+int ServerEchoData(SSL *ssl, int clientfd, int echoData, int block, size_t throughput)
 {
     int ret = 0, err;
     double start = 0, rx_time = 0, tx_time = 0;
     int len, rx_pos;
     size_t xfer_bytes = 0;
-    char* buffer;
+    char *buffer;
 
-    buffer = (char*)XMALLOC((size_t)block, NULL, DYNAMIC_TYPE_TMP_BUFFER);
+    buffer = (char *)XMALLOC((size_t)block, NULL, DYNAMIC_TYPE_TMP_BUFFER);
     if (!buffer)
     {
         err_sys_ex(runWithErrors, "Server buffer malloc failed");
@@ -606,7 +607,7 @@ ServerEchoData(SSL* ssl, int clientfd, int echoData, int block, size_t throughpu
     return 0;
 }
 static void
-ServerRead(WOLFSSL* ssl, char* input, int inputLen)
+ServerRead(WOLFSSL *ssl, char *input, int inputLen)
 {
     int ret, err;
     char buffer[WOLFSSL_MAX_ERROR_SZ];
@@ -716,7 +717,7 @@ ServerRead(WOLFSSL* ssl, char* input, int inputLen)
 }
 
 static void
-ServerWrite(WOLFSSL* ssl, const char* output, int outputLen)
+ServerWrite(WOLFSSL *ssl, const char *output, int outputLen)
 {
     int ret, err;
     int len;
@@ -771,7 +772,7 @@ ServerWrite(WOLFSSL* ssl, const char* output, int outputLen)
 #define MAX_GROUP_NUMBER 4
 
 static void
-SetKeyShare(WOLFSSL* ssl, int onlyKeyShare, int useX25519, int useX448, int usePqc, char* pqcAlg)
+SetKeyShare(WOLFSSL *ssl, int onlyKeyShare, int useX25519, int useX448, int usePqc, char *pqcAlg)
 {
     int ret;
     int groups[MAX_GROUP_NUMBER] = {0};
@@ -989,7 +990,7 @@ SetKeyShare(WOLFSSL* ssl, int onlyKeyShare, int useX25519, int useX448, int useP
             {
                 if (wolfSSL_UseKeyShare(ssl, groups[count]) == WOLFSSL_SUCCESS)
                 {
-                    //printf("Using Post-Quantum KEM: %s\n", pqcAlg);
+                    // printf("Using Post-Quantum KEM: %s\n", pqcAlg);
                     count++;
                 }
                 else
@@ -1090,7 +1091,7 @@ SetKeyShare(WOLFSSL* ssl, int onlyKeyShare, int useX25519, int useX448, int useP
 /*  4. add the same message into Japanese section         */
 /*     (will be translated later)                         */
 /*  5. add printf() into suitable position of Usage()     */
-static const char* server_usage_msg[][66] = {
+static const char *server_usage_msg[][66] = {
     /* English */
     {
         " NOTE: All files relative to wolfSSL home dir\n", /* 0 */
@@ -1218,8 +1219,8 @@ static const char* server_usage_msg[][66] = {
 #ifdef HAVE_CURVE448
         "-8          Pre-generate Key share using Curve448 only\n", /* 56 */
 #endif
-#if defined(OPENSSL_ALL) && defined(WOLFSSL_CERT_GEN) &&                                           \
-    (defined(WOLFSSL_CERT_REQ) || defined(WOLFSSL_CERT_EXT)) && !defined(NO_FILESYSTEM) &&         \
+#if defined(OPENSSL_ALL) && defined(WOLFSSL_CERT_GEN) &&                                   \
+    (defined(WOLFSSL_CERT_REQ) || defined(WOLFSSL_CERT_EXT)) && !defined(NO_FILESYSTEM) && \
     !defined(NO_WOLFSSL_DIR)
         "-9          Use hash dir look up for certificate loading\n"
         "            loading from <wolfSSL home>/certs folder\n"
@@ -1434,8 +1435,8 @@ static const char* server_usage_msg[][66] = {
 #ifdef HAVE_CURVE448
         "-8          Curve448のみを使用して鍵共有を事前生成する\n", /* 56 */
 #endif
-#if defined(OPENSSL_ALL) && defined(WOLFSSL_CERT_GEN) &&                                           \
-    (defined(WOLFSSL_CERT_REQ) || defined(WOLFSSL_CERT_EXT)) && !defined(NO_FILESYSTEM) &&         \
+#if defined(OPENSSL_ALL) && defined(WOLFSSL_CERT_GEN) &&                                   \
+    (defined(WOLFSSL_CERT_REQ) || defined(WOLFSSL_CERT_EXT)) && !defined(NO_FILESYSTEM) && \
     !defined(NO_WOLFSSL_DIR)
         "-9          証明書の読み込みに hash dir 機能を使用する\n"
         "            <wolfSSL home>/certs フォルダーからロードします\n"
@@ -1516,7 +1517,7 @@ static void
 Usage(void)
 {
     int msgId = 0;
-    const char** msg = server_usage_msg[lng_index];
+    const char **msg = server_usage_msg[lng_index];
 
     printf("%s%s%s", "server ", LIBWOLFSSL_VERSION_STRING, msg[msgId]);
     printf("%s", msg[++msgId]);                   /* ? */
@@ -1617,7 +1618,7 @@ Usage(void)
 #ifdef WOLFSSL_EARLY_DATA
     printf("%s", msg[++msgId]); /* -0 */
 #endif
-#if !defined(NO_DH) && !defined(HAVE_FIPS) && !defined(HAVE_SELFTEST) &&                           \
+#if !defined(NO_DH) && !defined(HAVE_FIPS) && !defined(HAVE_SELFTEST) && \
     !defined(WOLFSSL_OLD_PRIME_CHECK)
     printf("-2          Disable DH Prime check\n");
 #endif
@@ -1635,8 +1636,8 @@ Usage(void)
 #ifdef HAVE_CURVE448
     printf("%s", msg[++msgId]); /* -8 */
 #endif
-#if defined(OPENSSL_ALL) && defined(WOLFSSL_CERT_GEN) &&                                           \
-    (defined(WOLFSSL_CERT_REQ) || defined(WOLFSSL_CERT_EXT)) && !defined(NO_FILESYSTEM) &&         \
+#if defined(OPENSSL_ALL) && defined(WOLFSSL_CERT_GEN) &&                                   \
+    (defined(WOLFSSL_CERT_REQ) || defined(WOLFSSL_CERT_EXT)) && !defined(NO_FILESYSTEM) && \
     !defined(NO_WOLFSSL_DIR)
     printf("%s", msg[++msgId]); /* -9 */
 #endif
@@ -1680,13 +1681,13 @@ Usage(void)
  * him. The client will check that the ekm matches the one computed by itself.
  */
 static int
-server_srtp_test(WOLFSSL* ssl, func_args* args)
+server_srtp_test(WOLFSSL *ssl, func_args *args)
 {
     size_t srtp_secret_length;
     byte *srtp_secret, *p;
     int ret;
 #ifdef WOLFSSL_COND
-    srtp_test_helper* srtp_helper = args->srtp_helper;
+    srtp_test_helper *srtp_helper = args->srtp_helper;
 #else
     (void)args;
 #endif
@@ -1698,7 +1699,7 @@ server_srtp_test(WOLFSSL* ssl, func_args* args)
         return ret;
     }
 
-    srtp_secret = (byte*)XMALLOC(srtp_secret_length, NULL, DYNAMIC_TYPE_TMP_BUFFER);
+    srtp_secret = (byte *)XMALLOC(srtp_secret_length, NULL, DYNAMIC_TYPE_TMP_BUFFER);
     if (srtp_secret == NULL)
     {
         err_sys("DTLS SRTP: Memory error");
@@ -1748,8 +1749,8 @@ server_srtp_test(WOLFSSL* ssl, func_args* args)
 // Fetches the matching key material from Bob's KMS using the ID sent by Alice
 #define IOT_TESTBED 1
 static int
-fetch_qkd_key_from_kms(const char* key_id, byte* out_key_material)
-{   
+fetch_qkd_key_from_kms(const char *key_id, byte *out_key_material)
+{
     struct timeval t0, t1;
     ////printf("[QKD-KMS] Server requesting dec_keys for ID: %s\n", key_id);
 
@@ -1766,8 +1767,8 @@ fetch_qkd_key_from_kms(const char* key_id, byte* out_key_material)
     byte mac_tag[WC_SHA384_DIGEST_SIZE]; // 48 bytes
     char hex_mac[WC_SHA384_DIGEST_SIZE * 2 + 1];
 
-    wc_HmacSetKey(&hmac, WC_HASH_TYPE_SHA384, KMS_SHARED_SECRET, strlen((char*)KMS_SHARED_SECRET));
-    wc_HmacUpdate(&hmac, (const byte*)json_body, strlen(json_body));
+    wc_HmacSetKey(&hmac, WC_HASH_TYPE_SHA384, KMS_SHARED_SECRET, strlen((char *)KMS_SHARED_SECRET));
+    wc_HmacUpdate(&hmac, (const byte *)json_body, strlen(json_body));
     wc_HmacFinal(&hmac, mac_tag);
     for (int i = 0; i < WC_SHA384_DIGEST_SIZE; i++)
     {
@@ -1786,27 +1787,27 @@ fetch_qkd_key_from_kms(const char* key_id, byte* out_key_material)
             json_body);
     gettimeofday(&t1, NULL);
     current_m1_3_1_auth_us = timer_diff_us(&t0, &t1);
-    //printf("[QKD-KMS] HMAC computation took %ld microseconds.\n", current_m1_3_1_auth_us);
-    #if IOT_TESTBED
+// printf("[QKD-KMS] HMAC computation took %ld microseconds.\n", current_m1_3_1_auth_us);
+#if IOT_TESTBED
     unsigned char dummy_qkd_key[32] = {0x00, 0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07,
                                        0x08, 0x09, 0x0A, 0x0B, 0x0C, 0x0D, 0x0E, 0x0F,
                                        0x10, 0x11, 0x12, 0x13, 0x14, 0x15, 0x16, 0x17,
                                        0x18, 0x19, 0x1A, 0x1B, 0x1C, 0x1D, 0x1E, 0x1F};
-    
-    memcpy(out_key_material, dummy_qkd_key, 32);
-    //printf("[QKD-KMS] IOT_TESTBED defined. Bypassing HTTP fetch. Mock Key injected.\n");
 
-    #else
-    //printf("[QKD-KMS] Sending HTTP request to KMS...\n");
+    memcpy(out_key_material, dummy_qkd_key, 32);
+    // printf("[QKD-KMS] IOT_TESTBED defined. Bypassing HTTP fetch. Mock Key injected.\n");
+
+#else
+    // printf("[QKD-KMS] Sending HTTP request to KMS...\n");
     int sock = socket(AF_INET, SOCK_STREAM, 0);
     struct sockaddr_in kms_addr;
     kms_addr.sin_family = AF_INET;
     kms_addr.sin_port = htons(81);
     inet_pton(AF_INET, "172.30.0.100", &kms_addr.sin_addr);
 
-    if (connect(sock, (struct sockaddr*)&kms_addr, sizeof(kms_addr)) < 0)
+    if (connect(sock, (struct sockaddr *)&kms_addr, sizeof(kms_addr)) < 0)
     {
-        //printf("[QKD-KMS] FATAL: SAE cannot connect to KMS at 172.30.0.100:81\n");
+        // printf("[QKD-KMS] FATAL: SAE cannot connect to KMS at 172.30.0.100:81\n");
         return -1;
     }
 
@@ -1822,10 +1823,10 @@ fetch_qkd_key_from_kms(const char* key_id, byte* out_key_material)
         bytes_received += (int)n;
 
         // smart HTTP break: check if we have received the full body
-        char* header_end = strstr(response, "\r\n\r\n");
+        char *header_end = strstr(response, "\r\n\r\n");
         if (header_end != NULL)
         {
-            char* cl_ptr = strstr(response, "Content-Length: ");
+            char *cl_ptr = strstr(response, "Content-Length: ");
             if (cl_ptr)
             {
                 int content_length = atoi(cl_ptr + strlen("Content-Length: "));
@@ -1847,71 +1848,76 @@ fetch_qkd_key_from_kms(const char* key_id, byte* out_key_material)
     {
         if (strstr(response, "HTTP/1.1 401 Unauthorized"))
         {
-            //printf("[QKD-KMS] ERROR: KMS rejected authentication. Check shared secret and HMAC.\n");
+            // printf("[QKD-KMS] ERROR: KMS rejected authentication. Check shared secret and HMAC.\n");
         }
         else if (strstr(response, "HTTP/1.1 406 Not Acceptable"))
         {
-            //printf("[QKD-KMS] ERROR: KMS did not find the requested key ID.\n");
+            // printf("[QKD-KMS] ERROR: KMS did not find the requested key ID.\n");
         }
         else if (strstr(response, "HTTP/1.1 404 Not Found"))
         {
-            //printf("[QKD-KMS] ERROR: KMS endpoint not found. Check URL and API version.\n");
+            // printf("[QKD-KMS] ERROR: KMS endpoint not found. Check URL and API version.\n");
         }
         else
         {
-            //printf("[QKD-KMS] ERROR: Unexpected HTTP response from KMS:\n%s\n", response);
+            // printf("[QKD-KMS] ERROR: Unexpected HTTP response from KMS:\n%s\n", response);
         }
         return -1;
     }
 
     // Parse the key material
-    char* key_label = strstr(response, "\"key\":\"");
+    char *key_label = strstr(response, "\"key\":\"");
     if (!key_label)
     {
         return -1;
     }
 
-    char* key_start = key_label + 7;
-    char* key_end = strchr(key_start, '"');
+    char *key_start = key_label + 7;
+    char *key_end = strchr(key_start, '"');
     char b64_key[256];
     size_t b64_len = key_end - key_start;
     strncpy(b64_key, key_start, b64_len);
     b64_key[b64_len] = '\0';
 
     word32 outLen = 32;
-    if (Base64_Decode((byte*)b64_key, (word32)b64_len, out_key_material, &outLen) != 0)
+    if (Base64_Decode((byte *)b64_key, (word32)b64_len, out_key_material, &outLen) != 0)
     {
-        //printf("[QKD-KMS] ERROR: Bob failed base64 decoding.\n");
+        // printf("[QKD-KMS] ERROR: Bob failed base64 decoding.\n");
         return -1;
     }
-    #endif
+#endif
     return 0; // Success
 }
 
 static unsigned int
-qkd_psk_server_tls13_cb(WOLFSSL* ssl,
-                        const char* identity,
-                        unsigned char* key,
+qkd_psk_server_tls13_cb(WOLFSSL *ssl,
+                        const char *identity,
+                        unsigned char *key,
                         unsigned int max_key_len,
-                        const char** ciphersuite)
+                        const char **ciphersuite)
 {
     (void)ssl;
     (void)max_key_len;
 
     // If the identity is larger than a standard UUID, it is a Session Ticket.
     // Return 0 to bypass the QKD logic and let wolfSSL decrypt the ticket!
-    if (strlen(identity) > 64) {
+    if (strlen(identity) > 64)
+    {
         printf("[TLS 1.3] Session Ticket received! Bypassing QKD fetch for Resumption.\n");
-        return 0; 
+        return 0;
     }
     // --------------------------
     // Use the new fetch function
+    struct timeval t0, t1;
+    gettimeofday(&t0, NULL);
     if (fetch_qkd_key_from_kms(identity, key) != 0)
     {
-        //printf("[QKD-KMS] Bob failed to sync key. Handshake will abort.\n");
+        // printf("[QKD-KMS] Bob failed to sync key. Handshake will abort.\n");
         return 0;
     }
-
+    
+    gettimeofday(&t1, NULL);
+    qkd_overhead_us = timer_diff_us(&t0, &t1);
     // Ensure the ciphersuite matches Alice's forced suite
     *ciphersuite = "TLS13-AES256-GCM-SHA384";
     return 32;
@@ -1920,11 +1926,11 @@ qkd_psk_server_tls13_cb(WOLFSSL* ssl,
 /* ========================================================= */
 
 static unsigned int
-qkd_psk_server_cs_cb(WOLFSSL* ssl,
-                     const char* identity,
-                     unsigned char* key,
+qkd_psk_server_cs_cb(WOLFSSL *ssl,
+                     const char *identity,
+                     unsigned char *key,
                      unsigned int max_key_len,
-                     const char** ciphersuite)
+                     const char **ciphersuite)
 {
     /* Tell the compiler we intentionally aren't using these standard callback args */
     (void)ssl;
@@ -1937,8 +1943,8 @@ qkd_psk_server_cs_cb(WOLFSSL* ssl,
 
     if (strncmp(identity, "QKD_KEY_ID_001", 14) == 0)
     {
-        //printf("[QKD-KMS] Authenticating to Server KMS via HMAC-SHA256...\n");
-        //printf("[QKD-KMS] Fetching matching QKD Key...\n");
+        // printf("[QKD-KMS] Authenticating to Server KMS via HMAC-SHA256...\n");
+        // printf("[QKD-KMS] Fetching matching QKD Key...\n");
 
         // Fill the key buffer with the exact same 32 bytes the client generated
         memset(key, 0xAB, 32);
@@ -1946,12 +1952,12 @@ qkd_psk_server_cs_cb(WOLFSSL* ssl,
         return 32; // Success: Return key length
     }
 
-    //printf("[QKD-KMS] Unknown Key ID. Handshake will fail.\n");
+    // printf("[QKD-KMS] Unknown Key ID. Handshake will fail.\n");
     return 0; // Fail: Unknown Key ID
 }
 
 static unsigned int
-qkd_psk_server_cb(WOLFSSL* ssl, const char* identity, unsigned char* key, unsigned int max_key_len)
+qkd_psk_server_cb(WOLFSSL *ssl, const char *identity, unsigned char *key, unsigned int max_key_len)
 {
     return qkd_psk_server_cs_cb(ssl, identity, key, max_key_len, NULL);
 }
@@ -1959,7 +1965,7 @@ qkd_psk_server_cb(WOLFSSL* ssl, const char* identity, unsigned char* key, unsign
 /* ========================================================= */
 
 THREAD_RETURN WOLFSSL_THREAD
-server_test(void* args)
+server_test(void *args)
 {
     SOCKET_T sockfd = WOLFSSL_SOCKET_INVALID;
     SOCKET_T clientfd = WOLFSSL_SOCKET_INVALID;
@@ -1967,8 +1973,8 @@ server_test(void* args)
     socklen_t client_len;
 
     wolfSSL_method_func method = NULL;
-    SSL_CTX* ctx = 0;
-    SSL* ssl = 0;
+    SSL_CTX *ctx = 0;
+    SSL *ssl = 0;
 #ifdef WOLFSSL_WOLFSENTRY_HOOKS
     wolfsentry_errcode_t wolfsentry_ret;
 #endif
@@ -2063,21 +2069,21 @@ server_test(void* args)
     int crlFlags = 0;
     int ret;
     int err = 0;
-    char* serverReadyFile = NULL;
-    char* alpnList = NULL;
+    char *serverReadyFile = NULL;
+    char *alpnList = NULL;
     unsigned char alpn_opt = 0;
-    char* cipherList = NULL;
+    char *cipherList = NULL;
     int useDefCipherList = 0;
-    const char* verifyCert;
-    const char* ourCert;
-    const char* ourKey;
-    const char* ourDhParam = dhParamFile;
-    tcp_ready* readySignal = NULL;
-    int argc = ((func_args*)args)->argc;
-    char** argv = ((func_args*)args)->argv;
+    const char *verifyCert;
+    const char *ourCert;
+    const char *ourKey;
+    const char *ourDhParam = dhParamFile;
+    tcp_ready *readySignal = NULL;
+    int argc = ((func_args *)args)->argc;
+    char **argv = ((func_args *)args)->argv;
 
 #ifdef WOLFSSL_TRUST_PEER_CERT
-    const char* trustCert = NULL;
+    const char *trustCert = NULL;
 #endif
 
 #ifndef NO_PSK
@@ -2085,7 +2091,7 @@ server_test(void* args)
 #endif
 
 #ifdef HAVE_SNI
-    char* sniHostName = NULL;
+    char *sniHostName = NULL;
 #endif
 
 #ifdef HAVE_TRUSTED_CA
@@ -2094,11 +2100,11 @@ server_test(void* args)
 
 #ifdef HAVE_OCSP
     int useOcsp = 0;
-    char* ocspUrl = NULL;
+    char *ocspUrl = NULL;
 #endif
 
 #ifdef HAVE_WNR
-    const char* wnrConfigFile = wnrConfig;
+    const char *wnrConfigFile = wnrConfig;
 #endif
     char buffer[WOLFSSL_MAX_ERROR_SZ];
 #ifdef WOLFSSL_TLS13
@@ -2124,7 +2130,7 @@ server_test(void* args)
     int hrrCookie = 0;
 #endif
     byte mcastID = 0;
-#if !defined(NO_DH) && !defined(HAVE_FIPS) && !defined(HAVE_SELFTEST) &&                           \
+#if !defined(NO_DH) && !defined(HAVE_FIPS) && !defined(HAVE_SELFTEST) && \
     !defined(WOLFSSL_OLD_PRIME_CHECK)
     int doDhKeyCheck = 1;
 #endif
@@ -2133,10 +2139,10 @@ server_test(void* args)
     char dtlsCID[DTLS_CID_BUFFER_SIZE] = {0};
 #endif /* WOLFSSL_DTLS_CID */
 #if defined(HAVE_CRL) && !defined(NO_FILESYSTEM)
-    char* crlDir = NULL;
+    char *crlDir = NULL;
 #endif
 #if defined(WOLFSSL_SYS_CRYPTO_POLICY)
-    const char* policy = NULL;
+    const char *policy = NULL;
 #endif /* WOLFSSL_SYS_CRYPTO_POLICY */
 
 #ifdef WOLFSSL_STATIC_MEMORY
@@ -2145,8 +2151,8 @@ server_test(void* args)
  * sizes see WOLFMEM_BUCKETS in memory.h */
 #if (defined(HAVE_ECC) && !defined(ALT_ECC_SIZE)) || defined(SESSION_CERTS)
 /* big enough to handle most cases including session certs */
-#if !defined(WOLFSSL_NO_CLIENT_AUTH) &&                                                            \
-    ((defined(HAVE_ED25519) && !defined(NO_ED25519_CLIENT_AUTH)) ||                                \
+#if !defined(WOLFSSL_NO_CLIENT_AUTH) &&                             \
+    ((defined(HAVE_ED25519) && !defined(NO_ED25519_CLIENT_AUTH)) || \
      (defined(HAVE_ED448) && !defined(NO_ED448_CLIENT_AUTH)))
     /* increase is due to EdDSA_Update */
     byte memory[440000];
@@ -2178,22 +2184,22 @@ server_test(void* args)
     int useX25519 = 0;
     int useX448 = 0;
     int usePqc = 0;
-    char* pqcAlg = NULL;
-    char* altPrivKey = NULL;
+    char *pqcAlg = NULL;
+    char *altPrivKey = NULL;
     int exitWithRet = 0;
     int loadCertKeyIntoSSLObj = 0;
 
 #ifdef HAVE_ENCRYPT_THEN_MAC
     int disallowETM = 0;
 #endif
-#if defined(OPENSSL_ALL) && defined(WOLFSSL_CERT_GEN) &&                                           \
-    (defined(WOLFSSL_CERT_REQ) || defined(WOLFSSL_CERT_EXT)) && !defined(NO_FILESYSTEM) &&         \
+#if defined(OPENSSL_ALL) && defined(WOLFSSL_CERT_GEN) &&                                   \
+    (defined(WOLFSSL_CERT_REQ) || defined(WOLFSSL_CERT_EXT)) && !defined(NO_FILESYSTEM) && \
     !defined(NO_WOLFSSL_DIR)
     int useCertFolder = 0;
 #endif
 
 #ifdef WOLFSSL_SRTP
-    const char* dtlsSrtpProfiles = NULL;
+    const char *dtlsSrtpProfiles = NULL;
 #endif
 
 #ifdef HAVE_TEST_SESSION_TICKET
@@ -2204,7 +2210,7 @@ server_test(void* args)
     int force_curve_group_id = 0;
 #endif
 
-    ((func_args*)args)->return_code = -1; /* error state */
+    ((func_args *)args)->return_code = -1; /* error state */
 
 #ifndef NO_RSA
     verifyCert = cliCertFile;
@@ -2719,7 +2725,7 @@ server_test(void* args)
             break;
 
         case '2':
-#if !defined(NO_DH) && !defined(HAVE_FIPS) && !defined(HAVE_SELFTEST) &&                           \
+#if !defined(NO_DH) && !defined(HAVE_FIPS) && !defined(HAVE_SELFTEST) && \
     !defined(WOLFSSL_OLD_PRIME_CHECK)
             doDhKeyCheck = 0;
 #endif
@@ -2772,15 +2778,16 @@ server_test(void* args)
 #endif
             break;
         case '9':
-#if defined(OPENSSL_ALL) && defined(WOLFSSL_CERT_GEN) &&                                           \
-    (defined(WOLFSSL_CERT_REQ) || defined(WOLFSSL_CERT_EXT)) && !defined(NO_FILESYSTEM) &&         \
+#if defined(OPENSSL_ALL) && defined(WOLFSSL_CERT_GEN) &&                                   \
+    (defined(WOLFSSL_CERT_REQ) || defined(WOLFSSL_CERT_EXT)) && !defined(NO_FILESYSTEM) && \
     !defined(NO_WOLFSSL_DIR)
             useCertFolder = 1;
             break;
 #endif
-        case '@': {
+        case '@':
+        {
 #ifdef HAVE_WC_INTROSPECTION
-            const char* conf_args = wolfSSL_configure_args();
+            const char *conf_args = wolfSSL_configure_args();
             if (conf_args)
             {
                 puts(conf_args);
@@ -2797,9 +2804,10 @@ server_test(void* args)
 #endif
         }
 
-        case '#': {
+        case '#':
+        {
 #ifdef HAVE_WC_INTROSPECTION
-            const char* cflags = wolfSSL_global_cflags();
+            const char *cflags = wolfSSL_global_cflags();
             if (cflags)
             {
                 puts(cflags);
@@ -2825,7 +2833,8 @@ server_test(void* args)
 #endif
 
 #ifdef HAVE_PQC
-        case 259: {
+        case 259:
+        {
             usePqc = 1;
 #if defined(WOLFSSL_TLS13) && defined(HAVE_SUPPORTED_CURVES)
             onlyKeyShare = 2;
@@ -2841,7 +2850,8 @@ server_test(void* args)
             break;
 #endif
 #ifdef CAN_FORCE_CURVE
-        case 262: {
+        case 262:
+        {
 /* Note: this requires TSL1.3 (version >= 4) */
 #ifdef HAVE_ECC
             int j = 0; /* our group index */
@@ -2986,16 +2996,16 @@ server_test(void* args)
 #endif /* !WOLFSSL_VXWORKS */
 
     // ===========================================================
-    // IOT HARDCODE: force the server to accept 
+    // IOT HARDCODE: force the server to accept
     // ===========================================================
     loops = 1000;
-    version = 4;                  // -v 4
-    useAnyAddr = 1;               // -b
-    usePqc = 1;                   // --pqc
-    pqcAlg = (char *)"ML_KEM_1024";       // ML_KEM_1024
-    onlyKeyShare = 3;             // Required internal flag for PQC KeyShares
-    usePsk = 1;                   // -s
-    usePskPlus = 1;               // -j
+    version = 4;                                    // -v 4
+    useAnyAddr = 1;                                 // -b
+    usePqc = 1;                                     // --pqc
+    pqcAlg = (char *)"ML_KEM_1024";                 // ML_KEM_1024
+    onlyKeyShare = 3;                               // Required internal flag for PQC KeyShares
+    usePsk = 1;                                     // -s
+    usePskPlus = 1;                                 // -j
     cipherList = (char *)"TLS13-AES256-GCM-SHA384"; // -l
     /* Can only use DTLS over UDP or SCTP, can't do both. */
     if (dtlsUDP && dtlsSCTP)
@@ -3217,13 +3227,15 @@ server_test(void* args)
     // ==========================================
     // IOT HARDCODE: Load PQ Certs from RAM
     // ==========================================
-    if (wolfSSL_CTX_use_certificate_buffer(ctx, mldsa65_server_crt, 
-        mldsa65_server_crt_len, WOLFSSL_FILETYPE_PEM) != WOLFSSL_SUCCESS) {
+    if (wolfSSL_CTX_use_certificate_buffer(ctx, mldsa65_server_crt,
+                                           mldsa65_server_crt_len, WOLFSSL_FILETYPE_PEM) != WOLFSSL_SUCCESS)
+    {
         err_sys("Failed to load server cert buffer");
     }
-    
-    if (wolfSSL_CTX_use_PrivateKey_buffer(ctx, mldsa65_server_key, 
-        mldsa65_server_key_len, WOLFSSL_FILETYPE_PEM) != WOLFSSL_SUCCESS) {
+
+    if (wolfSSL_CTX_use_PrivateKey_buffer(ctx, mldsa65_server_key,
+                                          mldsa65_server_key_len, WOLFSSL_FILETYPE_PEM) != WOLFSSL_SUCCESS)
+    {
         err_sys("Failed to load server key buffer");
     }
 
@@ -3317,7 +3329,7 @@ server_test(void* args)
         err_sys_ex(runWithErrors, "error loading static ECDH key");
     }
     {
-        const byte* key = NULL;
+        const byte *key = NULL;
         word32 keySz = 0;
         /* example for getting pointer to loaded static ephemeral key */
         wolfSSL_CTX_get_ephemeral_key(ctx, WC_PK_TYPE_ECDH, &key, &keySz);
@@ -3527,7 +3539,7 @@ server_test(void* args)
         wolfSSL_CTX_allow_anon_cipher(ctx);
         if (cipherList == NULL || (cipherList && useDefCipherList))
         {
-            const char* defaultCipherList;
+            const char *defaultCipherList;
             defaultCipherList = "ADH-AES256-GCM-SHA384:"
                                 "ADH-AES128-SHA";
             if (SSL_CTX_set_cipher_list(ctx, defaultCipherList) != WOLFSSL_SUCCESS)
@@ -3555,13 +3567,13 @@ server_test(void* args)
 #ifdef TEST_BEFORE_DATE
         verify_flags |= WOLFSSL_LOAD_FLAG_DATE_ERR_OKAY;
 #endif
-#if defined(OPENSSL_ALL) && defined(WOLFSSL_CERT_GEN) &&                                           \
-    (defined(WOLFSSL_CERT_REQ) || defined(WOLFSSL_CERT_EXT)) && !defined(NO_FILESYSTEM) &&         \
+#if defined(OPENSSL_ALL) && defined(WOLFSSL_CERT_GEN) &&                                   \
+    (defined(WOLFSSL_CERT_REQ) || defined(WOLFSSL_CERT_EXT)) && !defined(NO_FILESYSTEM) && \
     !defined(NO_WOLFSSL_DIR)
         if (useCertFolder)
         {
-            WOLFSSL_X509_STORE* store;
-            WOLFSSL_X509_LOOKUP* lookup;
+            WOLFSSL_X509_STORE *store;
+            WOLFSSL_X509_LOOKUP *lookup;
 
             store = wolfSSL_CTX_get_cert_store(ctx);
             if (store == NULL)
@@ -3604,8 +3616,8 @@ server_test(void* args)
                 }
             }
 #endif /* WOLFSSL_TRUST_PEER_CERT */
-#if defined(OPENSSL_ALL) && defined(WOLFSSL_CERT_GEN) &&                                           \
-    (defined(WOLFSSL_CERT_REQ) || defined(WOLFSSL_CERT_EXT)) && !defined(NO_FILESYSTEM) &&         \
+#if defined(OPENSSL_ALL) && defined(WOLFSSL_CERT_GEN) &&                                   \
+    (defined(WOLFSSL_CERT_REQ) || defined(WOLFSSL_CERT_EXT)) && !defined(NO_FILESYSTEM) && \
     !defined(NO_WOLFSSL_DIR)
         }
 #endif
@@ -3616,7 +3628,7 @@ server_test(void* args)
     if (cipherList == NULL && version < 4)
     {
         /* static RSA or static ECC cipher suites */
-        const char* staticCipherList = "AES128-SHA:ECDH-ECDSA-AES128-SHA";
+        const char *staticCipherList = "AES128-SHA:ECDH-ECDSA-AES128-SHA";
         if (SSL_CTX_set_cipher_list(ctx, staticCipherList) != WOLFSSL_SUCCESS)
         {
             err_sys_ex(runWithErrors, "server can't set cipher list 3");
@@ -3723,7 +3735,7 @@ server_test(void* args)
             {
                 client_len = sizeof client_addr;
                 clientfd =
-                    accept(sockfd, (struct sockaddr*)&client_addr, (ACCEPT_THIRD_T)&client_len);
+                    accept(sockfd, (struct sockaddr *)&client_addr, (ACCEPT_THIRD_T)&client_len);
             }
             else
             {
@@ -3945,12 +3957,12 @@ server_test(void* args)
         }
 #ifndef NO_RSA
         /* All the OCSP Stapling test certs are RSA. */
-#if !defined(NO_FILESYSTEM) &&                                                                     \
+#if !defined(NO_FILESYSTEM) && \
     (defined(HAVE_CERTIFICATE_STATUS_REQUEST) || defined(HAVE_CERTIFICATE_STATUS_REQUEST_V2))
         { /* scope start */
-            const char* ca1 = "certs/ocsp/intermediate1-ca-cert.pem";
-            const char* ca2 = "certs/ocsp/intermediate2-ca-cert.pem";
-            const char* ca3 = "certs/ocsp/intermediate3-ca-cert.pem";
+            const char *ca1 = "certs/ocsp/intermediate1-ca-cert.pem";
+            const char *ca2 = "certs/ocsp/intermediate2-ca-cert.pem";
+            const char *ca3 = "certs/ocsp/intermediate3-ca-cert.pem";
             int fails = 0;
 
             if (wolfSSL_CTX_EnableOCSPStapling(ctx) != WOLFSSL_SUCCESS)
@@ -4042,7 +4054,7 @@ server_test(void* args)
 #endif
 
         /* do accept */
-        readySignal = ((func_args*)args)->signal;
+        readySignal = ((func_args *)args)->signal;
         if (readySignal)
         {
             readySignal->srfName = serverReadyFile;
@@ -4051,7 +4063,7 @@ server_test(void* args)
         client_len = sizeof client_addr;
         tcp_accept(&sockfd,
                    &clientfd,
-                   (func_args*)args,
+                   (func_args *)args,
                    port,
                    useAnyAddr,
                    dtlsUDP,
@@ -4108,10 +4120,10 @@ server_test(void* args)
                  * client's address and set it into the ssl object later to
                  * generate the cookie. */
                 n = (int)recvfrom(clientfd,
-                                  (char*)b,
+                                  (char *)b,
                                   sizeof(b),
                                   MSG_PEEK,
-                                  (struct sockaddr*)&client_addr,
+                                  (struct sockaddr *)&client_addr,
                                   &client_len);
 
                 if (n <= 0)
@@ -4138,10 +4150,10 @@ server_test(void* args)
                 {
                     /* discard the packet */
                     n = (int)recvfrom(clientfd,
-                                      (char*)b,
+                                      (char *)b,
                                       sizeof(b),
                                       0,
-                                      (struct sockaddr*)&client_addr,
+                                      (struct sockaddr *)&client_addr,
                                       &client_len);
 
                     if (n <= 0)
@@ -4173,11 +4185,11 @@ server_test(void* args)
 #ifdef USE_WOLFSSL_IO
                 /* connect on a udp to associate peer with this fd to make it
                  * simpler for SimulateWantWriteIOSendCb */
-                if (connect(clientfd, (struct sockaddr*)&client_addr, client_len) != 0)
+                if (connect(clientfd, (struct sockaddr *)&client_addr, client_len) != 0)
                 {
                     err_sys_ex(catastrophic, "error in connecting to peer");
                 }
-                wolfSSL_SetIOWriteCtx(ssl, (void*)&sockfd);
+                wolfSSL_SetIOWriteCtx(ssl, (void *)&sockfd);
 #endif
             }
         }
@@ -4187,10 +4199,10 @@ server_test(void* args)
         {
             SOCKADDR_IN_T local_addr;
             socklen_t local_len = sizeof(local_addr);
-            getsockname(clientfd, (struct sockaddr*)&local_addr, (socklen_t*)&local_len);
+            getsockname(clientfd, (struct sockaddr *)&local_addr, (socklen_t *)&local_len);
 
-            if (((struct sockaddr*)&client_addr)->sa_family !=
-                ((struct sockaddr*)&local_addr)->sa_family)
+            if (((struct sockaddr *)&client_addr)->sa_family !=
+                ((struct sockaddr *)&local_addr)->sa_family)
             {
                 err_sys_ex(catastrophic, "client_addr.sa_family != local_addr.sa_family");
             }
@@ -4215,7 +4227,7 @@ server_test(void* args)
             SetDH(ssl); /* repick suites with DHE, higher priority than
                          * PSK */
 #endif
-#if !defined(NO_DH) && !defined(WOLFSSL_OLD_PRIME_CHECK) && !defined(HAVE_FIPS) &&                 \
+#if !defined(NO_DH) && !defined(WOLFSSL_OLD_PRIME_CHECK) && !defined(HAVE_FIPS) && \
     !defined(HAVE_SELFTEST)
             if (!doDhKeyCheck)
             {
@@ -4232,7 +4244,7 @@ server_test(void* args)
             {
                 err_sys("Can't enable DTLS ConnectionID");
             }
-            ret = wolfSSL_dtls_cid_set(ssl, (byte*)dtlsCID, (word32)XSTRLEN(dtlsCID));
+            ret = wolfSSL_dtls_cid_set(ssl, (byte *)dtlsCID, (word32)XSTRLEN(dtlsCID));
             if (ret != WOLFSSL_SUCCESS)
             {
                 err_sys("Can't set DTLS ConnectionID");
@@ -4293,7 +4305,7 @@ server_test(void* args)
                     }
                 } while (err == WC_NO_ERR_TRACE(WC_PENDING_E) || ret > 0);
             }
-#endif      
+#endif
             struct timeval t_tls_start, t_tls_end;
             current_m1_3_1_auth_us = 0;
 
@@ -4304,28 +4316,29 @@ server_test(void* args)
 
             // inject CSV output logic
             long tls_hs_us = timer_diff_us(&t_tls_start, &t_tls_end);
-        long qkd_auth_us = current_m1_3_1_auth_us;
-        long pq_generic_us = tls_hs_us - qkd_auth_us;
-        
-        const char *negotiated_cipher = SSL_get_cipher(ssl);
-        const char *pq_kem_alg = "ML-KEM-1024";
-        const char *cert_pub_alg = "ML-DSA-65";
-        const char *cert_sig_alg = "ML-DSA-87";
-        // Print CSV Header on first run
-        if (cnt == 0) {
-            printf("\nrun_id,ciphersuite,kem_alg,cert_pub_alg,cert_sig_alg,tls_handshake_ms,kms_auth_ms,pq_generic_ms\n");
-        }
-        
-        // 4. Print the expanded actual metrics
-        printf("%d,%s,%s,%s,%s,%.3f,%.6f,%.3f\n",
-               cnt + 1,
-               negotiated_cipher,
-               pq_kem_alg,
-               cert_pub_alg,
-               cert_sig_alg,
-               tls_hs_us / 1000.0,
-               qkd_auth_us / 1000.0,
-               pq_generic_us / 1000.0);
+            long qkd_auth_us = current_m1_3_1_auth_us;
+            long pq_generic_us = tls_hs_us - qkd_auth_us;
+
+            const char *negotiated_cipher = SSL_get_cipher(ssl);
+            const char *pq_kem_alg = "ML-KEM-1024";
+            const char *cert_pub_alg = "ML-DSA-65";
+            const char *cert_sig_alg = "ML-DSA-87";
+            // Print CSV Header on first run
+            if (cnt == 0)
+            {
+                printf("\nrun_id,ciphersuite,kem_alg,cert_pub_alg,cert_sig_alg,tls_handshake_ms,qkd_overhead_ms,pq_generic_ms\n");
+            }
+
+            // 4. Print the expanded actual metrics
+            printf("%d,%s,%s,%s,%s,%.3f,%.6f,%.3f\n",
+                   cnt + 1,
+                   negotiated_cipher,
+                   pq_kem_alg,
+                   cert_pub_alg,
+                   cert_sig_alg,
+                   tls_hs_us / 1000.0,
+                   qkd_overhead_us / 1000.0,
+                   pq_generic_us / 1000.0);
         }
 #else
         if (nonBlocking)
@@ -4362,12 +4375,12 @@ server_test(void* args)
                 ctx = NULL;
                 CloseSocket(clientfd);
                 CloseSocket(sockfd);
-                ((func_args*)args)->return_code = err;
+                ((func_args *)args)->return_code = err;
                 goto exit;
             }
         }
 
-        //showPeerEx(ssl, lng_index); 
+        // showPeerEx(ssl, lng_index);
         if (SSL_state(ssl) != 0)
         {
             err_sys_ex(runWithErrors, "SSL in error state");
@@ -4380,7 +4393,7 @@ server_test(void* args)
          */
         if (cipherList && !useDefCipherList && (!XSTRSTR(cipherList, ":")))
         {
-            WOLFSSL_CIPHER* established_cipher = wolfSSL_get_current_cipher(ssl);
+            WOLFSSL_CIPHER *established_cipher = wolfSSL_get_current_cipher(ssl);
             byte requested_cipherSuite0, requested_cipherSuite;
             int requested_cipherFlags;
             if (established_cipher &&
@@ -4393,10 +4406,10 @@ server_test(void* args)
                 word32 established_cipher_id = wolfSSL_CIPHER_get_id(established_cipher);
                 byte established_cipherSuite0 = (established_cipher_id >> 8) & 0xff;
                 byte established_cipherSuite = established_cipher_id & 0xff;
-                const char* established_cipher_name =
+                const char *established_cipher_name =
                     wolfSSL_get_cipher_name_from_suite(established_cipherSuite0,
                                                        established_cipherSuite);
-                const char* established_cipher_name_iana =
+                const char *established_cipher_name_iana =
                     wolfSSL_get_cipher_name_iana_from_suite(established_cipherSuite0,
                                                             established_cipherSuite);
 
@@ -4427,7 +4440,7 @@ server_test(void* args)
 
 #if defined(OPENSSL_EXTRA) || defined(HAVE_SECRET_CALLBACK)
         {
-            byte* rnd = NULL;
+            byte *rnd = NULL;
             size_t size;
 
             /* get size of buffer then print */
@@ -4440,7 +4453,7 @@ server_test(void* args)
             }
             else
             {
-                rnd = (byte*)XMALLOC(size, NULL, DYNAMIC_TYPE_TMP_BUFFER);
+                rnd = (byte *)XMALLOC(size, NULL, DYNAMIC_TYPE_TMP_BUFFER);
             }
 
             if (rnd == NULL)
@@ -4458,7 +4471,7 @@ server_test(void* args)
 
             if (rnd)
             {
-                byte* pt;
+                byte *pt;
                 printf("Server Random : ");
                 for (pt = rnd; pt < rnd + size; pt++)
                 {
@@ -4475,12 +4488,12 @@ server_test(void* args)
 #ifdef WOLFSSL_SRTP
         if (dtlsSrtpProfiles != NULL)
         {
-            err = server_srtp_test(ssl, (func_args*)args);
+            err = server_srtp_test(ssl, (func_args *)args);
             if (err != 0)
             {
                 if (exitWithRet)
                 {
-                    ((func_args*)args)->return_code = err;
+                    ((func_args *)args)->return_code = err;
                     wolfSSL_free(ssl);
                     ssl = NULL;
                     wolfSSL_CTX_free(ctx);
@@ -4702,17 +4715,19 @@ server_test(void* args)
 #endif
             (void)useWebServerMsg;
 
-            /* ======================================================= */
-            /* QKDNetSim: AUTOMATED SERVER REPLY                       */
-            /* ======================================================= */
-            #if defined(WOLFSSL_TLS13) && defined(HAVE_SESSION_TICKET)
-            if (sendTicket) {
-                if (wolfSSL_send_SessionTicket(ssl) != WOLFSSL_SUCCESS) {
+/* ======================================================= */
+/* QKDNetSim: AUTOMATED SERVER REPLY                       */
+/* ======================================================= */
+#if defined(WOLFSSL_TLS13) && defined(HAVE_SESSION_TICKET)
+            if (sendTicket)
+            {
+                if (wolfSSL_send_SessionTicket(ssl) != WOLFSSL_SUCCESS)
+                {
                     LOG_ERROR("Sending new session ticket failed\n");
                 }
             }
-            #endif
-            
+#endif
+
             // Automatically send the response
             ServerWrite(ssl, kReplyMsg, (int)XSTRLEN(kReplyMsg));
             /* ======================================================= */
@@ -4736,7 +4751,7 @@ server_test(void* args)
                 ctx = NULL;
                 CloseSocket(clientfd);
                 CloseSocket(sockfd);
-                ((func_args*)args)->return_code = err;
+                ((func_args *)args)->return_code = err;
                 goto exit;
             }
         }
@@ -4839,7 +4854,7 @@ server_test(void* args)
     SSL_CTX_free(ctx);
     ctx = NULL;
 
-    ((func_args*)args)->return_code = 0;
+    ((func_args *)args)->return_code = 0;
 
 exit:
 
@@ -4852,7 +4867,7 @@ exit:
     }
 #endif
 
-#if defined(HAVE_ECC) && defined(FP_ECC) && defined(HAVE_THREAD_LS) &&                             \
+#if defined(HAVE_ECC) && defined(FP_ECC) && defined(HAVE_THREAD_LS) && \
     (defined(NO_MAIN_DRIVER) || defined(HAVE_STACK_SIZE))
     wc_ecc_fp_free(); /* free per thread cache */
 #endif
@@ -4893,8 +4908,7 @@ exit:
 /* so overall tests can pull in test function */
 #ifndef NO_MAIN_DRIVER
 
-int
-main(int argc, char** argv)
+int main(int argc, char **argv)
 {
     func_args args;
     tcp_ready ready;
@@ -4943,6 +4957,6 @@ main(int argc, char** argv)
 }
 
 int myoptind = 0;
-char* myoptarg = NULL;
+char *myoptarg = NULL;
 
 #endif /* NO_MAIN_DRIVER */
