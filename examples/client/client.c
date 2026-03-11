@@ -61,6 +61,17 @@ static const char *wolfsentry_config_path = NULL;
 #include <wolfssl/wolfcrypt/coding.h>
 #include <wolfssl/wolfcrypt/hmac.h>
 
+// =================== testing =====================
+#include <sys/time.h>
+
+// global variables to capture callback metrics for the CSV
+static long current_m1_3_1_auth_us = 0;
+
+// helper function to calculate microseconds
+static long timer_diff_us(struct timeval *start, struct timeval *end) {
+    return (end->tv_sec - start->tv_sec) * 1000000L + (end->tv_usec - start->tv_usec);
+}
+
 #if !defined(NO_WOLFSSL_CLIENT) && !defined(NO_TLS)
 
 #ifdef NO_FILESYSTEM
@@ -2276,6 +2287,7 @@ static byte cached_key_material[32];
 static int
 fetch_qkd_key_from_kms(char *out_key_id, byte *out_key_material)
 {
+    struct timeval t0, t1;
     if (key_already_fetched)
     {
         if (out_key_id != cached_key_id)
@@ -2293,13 +2305,14 @@ fetch_qkd_key_from_kms(char *out_key_id, byte *out_key_material)
     double target_epsilon = 1.0;
     int key_size = 256;
 
-    char json_body[256];
+    char json_body[512];
     char request[1024];
     sprintf(json_body,
             "{\"number\": 1, \"size\": %d, \"qos_requirements\": {\"max_epsilon\": %f}}",
             key_size,
             target_epsilon);
     // ----- HMAC-SHA384 AUTHENTICATION ---
+    gettimeofday(&t0, NULL);
     const byte KMS_SHARED_SECRET[] = "ClientSecretIoTKey384BitQuantumSafe1234567890123";
     printf("[QKD-KMS] Computing HMAC-SHA384 of request body for authentication...\n");
     Hmac hmac;
@@ -2327,7 +2340,9 @@ fetch_qkd_key_from_kms(char *out_key_id, byte *out_key_material)
                 hex_mac,
                 (int)strlen(json_body),
                 json_body);
-    printf("\n[QKD-KMS] Client SAE requesting %d-bit key from 172.20.0.100\n", key_size);
+    gettimeofday(&t1, NULL);
+    current_m1_3_1_auth_us = timer_diff_us(&t0, &t1);
+    printf("[QKD-KMS] HMAC computation took %ld microseconds.\n", current_m1_3_1_auth_us);
     #if IOT_TESTBED
     unsigned char dummy_qkd_key[32] = {0x00, 0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07,
                                       0x08, 0x09, 0x0A, 0x0B, 0x0C, 0x0D, 0x0E, 0x0F,

@@ -76,6 +76,17 @@ static const char* wolfsentry_config_path = NULL;
 #include <wolfssl/error-ssl.h>
 #include <wolfssl/test.h>
 
+// =================== testing =====================
+#include <sys/time.h>
+
+// global variables to capture callback metrics for the CSV
+static long current_m1_3_1_auth_us = 0;
+
+// helper function to calculate microseconds
+static long timer_diff_us(struct timeval *start, struct timeval *end) {
+    return (end->tv_sec - start->tv_sec) * 1000000L + (end->tv_usec - start->tv_usec);
+}
+
 #if !defined(NO_WOLFSSL_SERVER) && !defined(NO_TLS)
 
 #if defined(WOLFSSL_TLS13) && (defined(HAVE_ECC) || defined(HAVE_CURVE25519) ||                    \
@@ -1734,7 +1745,8 @@ server_srtp_test(WOLFSSL* ssl, func_args* args)
 #define IOT_TESTBED 1
 static int
 fetch_qkd_key_from_kms(const char* key_id, byte* out_key_material)
-{
+{   
+    struct timeval t0, t1;
     printf("[QKD-KMS] Server requesting dec_keys for ID: %s\n", key_id);
 
     // Must match Bob's script exactly: {"key_IDs": [{"key_ID": "UUID"}]}
@@ -1743,6 +1755,7 @@ fetch_qkd_key_from_kms(const char* key_id, byte* out_key_material)
     char request[1024];
 
     // ----- HMAC-SHA384 AUTHENTICATION ---
+    gettimeofday(&t0, NULL);
     const byte KMS_SHARED_SECRET[] = "ServerSecretIoTKey384BitQuantumSafe1234567890123";
     printf("[QKD-KMS] Computing HMAC-SHA384 of request body for authentication...\n");
     Hmac hmac;
@@ -1767,6 +1780,9 @@ fetch_qkd_key_from_kms(const char* key_id, byte* out_key_material)
             hex_mac,
             (int)strlen(json_body),
             json_body);
+    gettimeofday(&t1, NULL);
+    current_m1_3_1_auth_us = timer_diff_us(&t0, &t1);
+    printf("[QKD-KMS] HMAC computation took %ld microseconds.\n", current_m1_3_1_auth_us);
     #if IOT_TESTBED
     unsigned char dummy_qkd_key[32] = {0x00, 0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07,
                                        0x08, 0x09, 0x0A, 0x0B, 0x0C, 0x0D, 0x0E, 0x0F,
