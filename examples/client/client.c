@@ -636,7 +636,7 @@ SetKeyShare(WOLFSSL *ssl,
                 err_sys("invalid post-quantum KEM specified");
             }
 
-            printf("Using Post-Quantum KEM: %s\n", pqcAlg);
+            //printf("Using Post-Quantum KEM: %s\n", pqcAlg);
             if (wolfSSL_UseKeyShare(ssl, group) == WOLFSSL_SUCCESS)
             {
                 groups[count++] = group;
@@ -827,7 +827,7 @@ ClientBenchmarkConnections(WOLFSSL_CTX *ctx,
 
             // print CSV header on first run
             if (i == 0) {
-                printf("\nrun_id,tcp_setup_ms,tls_handshake_ms,kms_auth_ms,pq_generic_ms\n");
+                printf("run_id,tcp_setup_ms,tls_handshake_ms,kms_auth_ms,pq_generic_ms\n");
             }
 
             // print actual metrics

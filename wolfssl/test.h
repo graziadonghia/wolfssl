@@ -1132,10 +1132,6 @@ static WC_INLINE int PasswordCallBack(char* passwd, int sz, int rw, void* userda
 static const char* client_showpeer_msg[][9] = {
     /* English */
     {
-        "SSL version is",
-        "SSL cipher suite is",
-        "SSL signature algorithm is",
-        "SSL curve name is",
         "SSL DH size is",
         "SSL reused session",
         "Alternate cert chain used",

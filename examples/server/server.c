@@ -985,7 +985,7 @@ SetKeyShare(WOLFSSL* ssl, int onlyKeyShare, int useX25519, int useX448, int useP
             {
                 if (wolfSSL_UseKeyShare(ssl, groups[count]) == WOLFSSL_SUCCESS)
                 {
-                    printf("Using Post-Quantum KEM: %s\n", pqcAlg);
+                    //printf("Using Post-Quantum KEM: %s\n", pqcAlg);
                     count++;
                 }
                 else
