@@ -350,7 +350,7 @@ void sce_test(void)
             sprintf(info[j].name, "clt_thd_%s", ((j%2) == 0) ?
                                                             "taskA" : "taskB");
 
-            printf(" %s connecting to %d port\n", info[j].name, info[j].port);
+            //printf(" %s connecting to %d port\n", info[j].name, info[j].port);
 
             xReturned = xTaskCreate(wolfSSL_TLS_client_do, info[j].name,
                                     THREAD_STACK_SIZE, &info[j], 2, NULL);

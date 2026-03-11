@@ -446,13 +446,7 @@ static void ShowX509(WOLFSSL_X509* x509, const char* hdr)
 
 
 static const char* client_showpeer_msg[] = {
-    "SSL version is",
-    "SSL cipher suite is",
-    "SSL curve name is",
-    "SSL DH size is",
-    "SSL reused session",
     "Alternate cert chain used",
-    "peer's cert info:",
     NULL
 };
 

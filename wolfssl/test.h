@@ -1132,10 +1132,7 @@ static WC_INLINE int PasswordCallBack(char* passwd, int sz, int rw, void* userda
 static const char* client_showpeer_msg[][9] = {
     /* English */
     {
-        "SSL DH size is",
-        "SSL reused session",
         "Alternate cert chain used",
-        "peer's cert info:",
         NULL
     },
 #ifndef NO_MULTIBYTE_PRINT
@@ -1531,7 +1528,7 @@ static WC_INLINE void tcp_connect(SOCKET_T* sockfd, const char* ip, word16 port,
                                int udp, int sctp, WOLFSSL* ssl)
 {
     SOCKADDR_IN_T addr;
-    fprintf(stderr, "connecting to %s:%d\n", ip, port);
+    //fprintf(stderr, "connecting to %s:%d\n", ip, port);
     build_addr(&addr, ip, port, udp, sctp);
     if (udp) {
         wolfSSL_dtls_set_peer(ssl, &addr, sizeof(addr));

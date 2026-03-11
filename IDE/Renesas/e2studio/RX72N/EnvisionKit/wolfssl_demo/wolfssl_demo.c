@@ -635,7 +635,7 @@ static void Tls_client_demo(void)
             sprintf(info[j].name, "clt_thd_%s", ((j%2) == 0) ?
                                                             "taskA" : "taskB");
 
-            printf(" %s connecting to %d port\n", info[j].name, info[j].port);
+            //printf(" %s connecting to %d port\n", info[j].name, info[j].port);
 
             xReturned = xTaskCreate(Tls_client, info[j].name,
                                         THREAD_STACK_SIZE, &info[j], 3, NULL);

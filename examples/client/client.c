@@ -824,15 +824,23 @@ ClientBenchmarkConnections(WOLFSSL_CTX *ctx,
 
             // overall PQ + TLS match
             long pq_generic_us = tls_handshake_us - qkd_auth_us;
-
+            // dynamically extract negotiated cipher
+            const char *negotiated_cipher = wolfSSL_get_cipher(ssl);
+            const char *pq_kem_alg = "ML-KEM-1024";
+            const char *cert_pub_alg = "ML-DSA-65";
+            const char *cert_sig_alg = "ML-DSA-87";
             // print CSV header on first run
             if (i == 0) {
-                printf("run_id,tcp_setup_ms,tls_handshake_ms,kms_auth_ms,pq_generic_ms\n");
+                printf("\nrun_id,ciphersuite,kem_alg,cert_pub_alg,cert_sig_alg,tcp_setup_ms,tls_handshake_ms,kms_auth_ms,pq_generic_ms\n");
             }
-
-            // print actual metrics
-            printf("%d,%.6f,%.6f,%.6f,%.6f\n",
+            
+            // 4. Print the expanded actual metrics
+            printf("%d,%s,%s,%s,%s,%.3f,%.3f,%.3f,%.3f\n",
                    i + 1,
+                   negotiated_cipher,
+                   pq_kem_alg,
+                   cert_pub_alg,
+                   cert_sig_alg,
                    tcp_setup_us / 1000.0,
                    tls_handshake_us / 1000.0,
                    qkd_auth_us / 1000.0,
