@@ -79,6 +79,7 @@ static const char *wolfsentry_config_path = NULL;
 // PQ certificates hardcoded
 #include "certs/pq_certs/mldsa65_server_crt.h"
 #include "certs/pq_certs/mldsa65_server_key.h"
+#include "certs/pq_certs/mldsa87_client_ca_crt.h"
 
 // =================== testing =====================
 #include <sys/time.h>
@@ -92,6 +93,222 @@ static long timer_diff_us(struct timeval *start, struct timeval *end)
 {
     return (end->tv_sec - start->tv_sec) * 1000000L + (end->tv_usec - start->tv_usec);
 }
+#define IOT_TESTBED 1
+static int
+fetch_qkd_key_from_kms(const char *key_id, byte *out_key_material)
+{
+    struct timeval t0, t1;
+    ////printf("[QKD-KMS] Server requesting dec_keys for ID: %s\n", key_id);
+
+    // Must match Bob's script exactly: {"key_IDs": [{"key_ID": "UUID"}]}
+    char json_body[512];
+    sprintf(json_body, "{\"key_IDs\": [{\"key_ID\": \"%s\"}]}", key_id);
+    char request[1024];
+
+    // ----- HMAC-SHA384 AUTHENTICATION ---
+    gettimeofday(&t0, NULL);
+    const byte KMS_SHARED_SECRET[] = "ServerSecretIoTKey384BitQuantumSafe1234567890123";
+    ////printf("[QKD-KMS] Computing HMAC-SHA384 of request body for authentication...\n");
+    Hmac hmac;
+    byte mac_tag[WC_SHA384_DIGEST_SIZE]; // 48 bytes
+    char hex_mac[WC_SHA384_DIGEST_SIZE * 2 + 1];
+
+    wc_HmacSetKey(&hmac, WC_HASH_TYPE_SHA384, KMS_SHARED_SECRET, strlen((char *)KMS_SHARED_SECRET));
+    wc_HmacUpdate(&hmac, (const byte *)json_body, strlen(json_body));
+    wc_HmacFinal(&hmac, mac_tag);
+    for (int i = 0; i < WC_SHA384_DIGEST_SIZE; i++)
+    {
+        sprintf(&hex_mac[i * 2], "%02x", mac_tag[i]);
+    }
+    sprintf(request,
+            "POST /api/v1/keys/aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa/dec_keys HTTP/1.1\r\n"
+            "Host: 172.30.0.100\r\n"
+            "Content-Type: application/json\r\n"
+            "Authorization: HMAC-SHA384 %s\r\n"
+            "Content-Length: %d\r\n"
+            "Connection: close\r\n\r\n"
+            "%s",
+            hex_mac,
+            (int)strlen(json_body),
+            json_body);
+    gettimeofday(&t1, NULL);
+    current_m1_3_1_auth_us = timer_diff_us(&t0, &t1);
+// printf("[QKD-KMS] HMAC computation took %ld microseconds.\n", current_m1_3_1_auth_us);
+#if IOT_TESTBED
+    unsigned char dummy_qkd_key[32] = {0x00, 0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07,
+                                       0x08, 0x09, 0x0A, 0x0B, 0x0C, 0x0D, 0x0E, 0x0F,
+                                       0x10, 0x11, 0x12, 0x13, 0x14, 0x15, 0x16, 0x17,
+                                       0x18, 0x19, 0x1A, 0x1B, 0x1C, 0x1D, 0x1E, 0x1F};
+
+    memcpy(out_key_material, dummy_qkd_key, 32);
+    // printf("[QKD-KMS] IOT_TESTBED defined. Bypassing HTTP fetch. Mock Key injected.\n");
+
+#else
+    // printf("[QKD-KMS] Sending HTTP request to KMS...\n");
+    int sock = socket(AF_INET, SOCK_STREAM, 0);
+    struct sockaddr_in kms_addr;
+    kms_addr.sin_family = AF_INET;
+    kms_addr.sin_port = htons(81);
+    inet_pton(AF_INET, "172.30.0.100", &kms_addr.sin_addr);
+
+    if (connect(sock, (struct sockaddr *)&kms_addr, sizeof(kms_addr)) < 0)
+    {
+        // printf("[QKD-KMS] FATAL: SAE cannot connect to KMS at 172.30.0.100:81\n");
+        return -1;
+    }
+
+    send(sock, request, strlen(request), 0);
+
+    char response[4096];
+    memset(response, 0, sizeof(response));
+    int bytes_received = 0;
+    ssize_t n = 0;
+    while ((n = read(sock, response + bytes_received, (int)sizeof(response) - bytes_received - 1)) >
+           0)
+    {
+        bytes_received += (int)n;
+
+        // smart HTTP break: check if we have received the full body
+        char *header_end = strstr(response, "\r\n\r\n");
+        if (header_end != NULL)
+        {
+            char *cl_ptr = strstr(response, "Content-Length: ");
+            if (cl_ptr)
+            {
+                int content_length = atoi(cl_ptr + strlen("Content-Length: "));
+                int header_length = (header_end + 4) - response;
+                if ((bytes_received - header_length) >= content_length)
+                {
+                    break; // Full body received
+                }
+            }
+            else if (strchr(header_end, '}'))
+            {
+                break; // No Content-Length but we see the end of JSON body
+            }
+        }
+    }
+    close(sock);
+
+    if (strstr(response, "HTTP/1.1 200 OK") == NULL)
+    {
+        if (strstr(response, "HTTP/1.1 401 Unauthorized"))
+        {
+            // printf("[QKD-KMS] ERROR: KMS rejected authentication. Check shared secret and HMAC.\n");
+        }
+        else if (strstr(response, "HTTP/1.1 406 Not Acceptable"))
+        {
+            // printf("[QKD-KMS] ERROR: KMS did not find the requested key ID.\n");
+        }
+        else if (strstr(response, "HTTP/1.1 404 Not Found"))
+        {
+            // printf("[QKD-KMS] ERROR: KMS endpoint not found. Check URL and API version.\n");
+        }
+        else
+        {
+            // printf("[QKD-KMS] ERROR: Unexpected HTTP response from KMS:\n%s\n", response);
+        }
+        return -1;
+    }
+
+    // Parse the key material
+    char *key_label = strstr(response, "\"key\":\"");
+    if (!key_label)
+    {
+        return -1;
+    }
+
+    char *key_start = key_label + 7;
+    char *key_end = strchr(key_start, '"');
+    char b64_key[256];
+    size_t b64_len = key_end - key_start;
+    strncpy(b64_key, key_start, b64_len);
+    b64_key[b64_len] = '\0';
+
+    word32 outLen = 32;
+    if (Base64_Decode((byte *)b64_key, (word32)b64_len, out_key_material, &outLen) != 0)
+    {
+        // printf("[QKD-KMS] ERROR: Bob failed base64 decoding.\n");
+        return -1;
+    }
+#endif
+    return 0; // Success
+}
+
+static unsigned int
+qkd_psk_server_tls13_cb(WOLFSSL *ssl,
+                        const char *identity,
+                        unsigned char *key,
+                        unsigned int max_key_len,
+                        const char **ciphersuite)
+{
+    (void)ssl;
+    (void)max_key_len;
+
+    // If the identity is larger than a standard UUID, it is a Session Ticket.
+    // Return 0 to bypass the QKD logic and let wolfSSL decrypt the ticket!
+    if (strlen(identity) > 64)
+    {
+        printf("[TLS 1.3] Session Ticket received! Bypassing QKD fetch for Resumption.\n");
+        return 0;
+    }
+    // --------------------------
+    // Use the new fetch function
+    struct timeval t0, t1;
+    gettimeofday(&t0, NULL);
+    if (fetch_qkd_key_from_kms(identity, key) != 0)
+    {
+        // printf("[QKD-KMS] Bob failed to sync key. Handshake will abort.\n");
+        return 0;
+    }
+    
+    gettimeofday(&t1, NULL);
+    qkd_overhead_us = timer_diff_us(&t0, &t1);
+    // Ensure the ciphersuite matches Alice's forced suite
+    *ciphersuite = "TLS13-AES256-GCM-SHA384";
+    return 32;
+}
+
+/* ========================================================= */
+
+static unsigned int
+qkd_psk_server_cs_cb(WOLFSSL *ssl,
+                     const char *identity,
+                     unsigned char *key,
+                     unsigned int max_key_len,
+                     const char **ciphersuite)
+{
+    /* Tell the compiler we intentionally aren't using these standard callback args */
+    (void)ssl;
+    (void)max_key_len;
+
+    printf("\n[QKD-KMS] Server received QKD Key ID from Client: %s\n", identity);
+
+    // In your real code, the server will authenticate to its KMS using HMAC here,
+    // sending the 'identity' to fetch the matching QKD key.
+
+    if (strncmp(identity, "QKD_KEY_ID_001", 14) == 0)
+    {
+        // printf("[QKD-KMS] Authenticating to Server KMS via HMAC-SHA256...\n");
+        // printf("[QKD-KMS] Fetching matching QKD Key...\n");
+
+        // Fill the key buffer with the exact same 32 bytes the client generated
+        memset(key, 0xAB, 32);
+        *ciphersuite = "TLS13-AES256-GCM-SHA384";
+        return 32; // Success: Return key length
+    }
+
+    // printf("[QKD-KMS] Unknown Key ID. Handshake will fail.\n");
+    return 0; // Fail: Unknown Key ID
+}
+
+static unsigned int
+qkd_psk_server_cb(WOLFSSL *ssl, const char *identity, unsigned char *key, unsigned int max_key_len)
+{
+    return qkd_psk_server_cs_cb(ssl, identity, key, max_key_len, NULL);
+}
+
+/* ========================================================= */
 
 #if !defined(NO_WOLFSSL_SERVER) && !defined(NO_TLS)
 
@@ -1747,222 +1964,6 @@ server_srtp_test(WOLFSSL *ssl, func_args *args)
 /* ========================================================= */
 
 // Fetches the matching key material from Bob's KMS using the ID sent by Alice
-#define IOT_TESTBED 1
-static int
-fetch_qkd_key_from_kms(const char *key_id, byte *out_key_material)
-{
-    struct timeval t0, t1;
-    ////printf("[QKD-KMS] Server requesting dec_keys for ID: %s\n", key_id);
-
-    // Must match Bob's script exactly: {"key_IDs": [{"key_ID": "UUID"}]}
-    char json_body[512];
-    sprintf(json_body, "{\"key_IDs\": [{\"key_ID\": \"%s\"}]}", key_id);
-    char request[1024];
-
-    // ----- HMAC-SHA384 AUTHENTICATION ---
-    gettimeofday(&t0, NULL);
-    const byte KMS_SHARED_SECRET[] = "ServerSecretIoTKey384BitQuantumSafe1234567890123";
-    ////printf("[QKD-KMS] Computing HMAC-SHA384 of request body for authentication...\n");
-    Hmac hmac;
-    byte mac_tag[WC_SHA384_DIGEST_SIZE]; // 48 bytes
-    char hex_mac[WC_SHA384_DIGEST_SIZE * 2 + 1];
-
-    wc_HmacSetKey(&hmac, WC_HASH_TYPE_SHA384, KMS_SHARED_SECRET, strlen((char *)KMS_SHARED_SECRET));
-    wc_HmacUpdate(&hmac, (const byte *)json_body, strlen(json_body));
-    wc_HmacFinal(&hmac, mac_tag);
-    for (int i = 0; i < WC_SHA384_DIGEST_SIZE; i++)
-    {
-        sprintf(&hex_mac[i * 2], "%02x", mac_tag[i]);
-    }
-    sprintf(request,
-            "POST /api/v1/keys/aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa/dec_keys HTTP/1.1\r\n"
-            "Host: 172.30.0.100\r\n"
-            "Content-Type: application/json\r\n"
-            "Authorization: HMAC-SHA384 %s\r\n"
-            "Content-Length: %d\r\n"
-            "Connection: close\r\n\r\n"
-            "%s",
-            hex_mac,
-            (int)strlen(json_body),
-            json_body);
-    gettimeofday(&t1, NULL);
-    current_m1_3_1_auth_us = timer_diff_us(&t0, &t1);
-// printf("[QKD-KMS] HMAC computation took %ld microseconds.\n", current_m1_3_1_auth_us);
-#if IOT_TESTBED
-    unsigned char dummy_qkd_key[32] = {0x00, 0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07,
-                                       0x08, 0x09, 0x0A, 0x0B, 0x0C, 0x0D, 0x0E, 0x0F,
-                                       0x10, 0x11, 0x12, 0x13, 0x14, 0x15, 0x16, 0x17,
-                                       0x18, 0x19, 0x1A, 0x1B, 0x1C, 0x1D, 0x1E, 0x1F};
-
-    memcpy(out_key_material, dummy_qkd_key, 32);
-    // printf("[QKD-KMS] IOT_TESTBED defined. Bypassing HTTP fetch. Mock Key injected.\n");
-
-#else
-    // printf("[QKD-KMS] Sending HTTP request to KMS...\n");
-    int sock = socket(AF_INET, SOCK_STREAM, 0);
-    struct sockaddr_in kms_addr;
-    kms_addr.sin_family = AF_INET;
-    kms_addr.sin_port = htons(81);
-    inet_pton(AF_INET, "172.30.0.100", &kms_addr.sin_addr);
-
-    if (connect(sock, (struct sockaddr *)&kms_addr, sizeof(kms_addr)) < 0)
-    {
-        // printf("[QKD-KMS] FATAL: SAE cannot connect to KMS at 172.30.0.100:81\n");
-        return -1;
-    }
-
-    send(sock, request, strlen(request), 0);
-
-    char response[4096];
-    memset(response, 0, sizeof(response));
-    int bytes_received = 0;
-    ssize_t n = 0;
-    while ((n = read(sock, response + bytes_received, (int)sizeof(response) - bytes_received - 1)) >
-           0)
-    {
-        bytes_received += (int)n;
-
-        // smart HTTP break: check if we have received the full body
-        char *header_end = strstr(response, "\r\n\r\n");
-        if (header_end != NULL)
-        {
-            char *cl_ptr = strstr(response, "Content-Length: ");
-            if (cl_ptr)
-            {
-                int content_length = atoi(cl_ptr + strlen("Content-Length: "));
-                int header_length = (header_end + 4) - response;
-                if ((bytes_received - header_length) >= content_length)
-                {
-                    break; // Full body received
-                }
-            }
-            else if (strchr(header_end, '}'))
-            {
-                break; // No Content-Length but we see the end of JSON body
-            }
-        }
-    }
-    close(sock);
-
-    if (strstr(response, "HTTP/1.1 200 OK") == NULL)
-    {
-        if (strstr(response, "HTTP/1.1 401 Unauthorized"))
-        {
-            // printf("[QKD-KMS] ERROR: KMS rejected authentication. Check shared secret and HMAC.\n");
-        }
-        else if (strstr(response, "HTTP/1.1 406 Not Acceptable"))
-        {
-            // printf("[QKD-KMS] ERROR: KMS did not find the requested key ID.\n");
-        }
-        else if (strstr(response, "HTTP/1.1 404 Not Found"))
-        {
-            // printf("[QKD-KMS] ERROR: KMS endpoint not found. Check URL and API version.\n");
-        }
-        else
-        {
-            // printf("[QKD-KMS] ERROR: Unexpected HTTP response from KMS:\n%s\n", response);
-        }
-        return -1;
-    }
-
-    // Parse the key material
-    char *key_label = strstr(response, "\"key\":\"");
-    if (!key_label)
-    {
-        return -1;
-    }
-
-    char *key_start = key_label + 7;
-    char *key_end = strchr(key_start, '"');
-    char b64_key[256];
-    size_t b64_len = key_end - key_start;
-    strncpy(b64_key, key_start, b64_len);
-    b64_key[b64_len] = '\0';
-
-    word32 outLen = 32;
-    if (Base64_Decode((byte *)b64_key, (word32)b64_len, out_key_material, &outLen) != 0)
-    {
-        // printf("[QKD-KMS] ERROR: Bob failed base64 decoding.\n");
-        return -1;
-    }
-#endif
-    return 0; // Success
-}
-
-static unsigned int
-qkd_psk_server_tls13_cb(WOLFSSL *ssl,
-                        const char *identity,
-                        unsigned char *key,
-                        unsigned int max_key_len,
-                        const char **ciphersuite)
-{
-    (void)ssl;
-    (void)max_key_len;
-
-    // If the identity is larger than a standard UUID, it is a Session Ticket.
-    // Return 0 to bypass the QKD logic and let wolfSSL decrypt the ticket!
-    if (strlen(identity) > 64)
-    {
-        printf("[TLS 1.3] Session Ticket received! Bypassing QKD fetch for Resumption.\n");
-        return 0;
-    }
-    // --------------------------
-    // Use the new fetch function
-    struct timeval t0, t1;
-    gettimeofday(&t0, NULL);
-    if (fetch_qkd_key_from_kms(identity, key) != 0)
-    {
-        // printf("[QKD-KMS] Bob failed to sync key. Handshake will abort.\n");
-        return 0;
-    }
-    
-    gettimeofday(&t1, NULL);
-    qkd_overhead_us = timer_diff_us(&t0, &t1);
-    // Ensure the ciphersuite matches Alice's forced suite
-    *ciphersuite = "TLS13-AES256-GCM-SHA384";
-    return 32;
-}
-
-/* ========================================================= */
-
-static unsigned int
-qkd_psk_server_cs_cb(WOLFSSL *ssl,
-                     const char *identity,
-                     unsigned char *key,
-                     unsigned int max_key_len,
-                     const char **ciphersuite)
-{
-    /* Tell the compiler we intentionally aren't using these standard callback args */
-    (void)ssl;
-    (void)max_key_len;
-
-    printf("\n[QKD-KMS] Server received QKD Key ID from Client: %s\n", identity);
-
-    // In your real code, the server will authenticate to its KMS using HMAC here,
-    // sending the 'identity' to fetch the matching QKD key.
-
-    if (strncmp(identity, "QKD_KEY_ID_001", 14) == 0)
-    {
-        // printf("[QKD-KMS] Authenticating to Server KMS via HMAC-SHA256...\n");
-        // printf("[QKD-KMS] Fetching matching QKD Key...\n");
-
-        // Fill the key buffer with the exact same 32 bytes the client generated
-        memset(key, 0xAB, 32);
-        *ciphersuite = "TLS13-AES256-GCM-SHA384";
-        return 32; // Success: Return key length
-    }
-
-    // printf("[QKD-KMS] Unknown Key ID. Handshake will fail.\n");
-    return 0; // Fail: Unknown Key ID
-}
-
-static unsigned int
-qkd_psk_server_cb(WOLFSSL *ssl, const char *identity, unsigned char *key, unsigned int max_key_len)
-{
-    return qkd_psk_server_cs_cb(ssl, identity, key, max_key_len, NULL);
-}
-
-/* ========================================================= */
 
 THREAD_RETURN WOLFSSL_THREAD
 server_test(void *args)
@@ -3419,14 +3420,14 @@ server_test(void *args)
         }
 #elif !defined(TEST_LOAD_BUFFER)
 #if defined(WOLFSSL_PEM_TO_DER)
-        if (SSL_CTX_use_certificate_chain_file(ctx, ourCert) != WOLFSSL_SUCCESS)
+        if (0 /*SSL_CTX_use_certificate_chain_file(ctx, ourCert) != WOLFSSL_SUCCESS*/)
 #else
-        if (wolfSSL_CTX_use_certificate_chain_file_format(ctx, ourCert, WOLFSSL_FILETYPE_ASN1) !=
-            WOLFSSL_SUCCESS)
+        if (0 /*wolfSSL_CTX_use_certificate_chain_file_format(ctx, ourCert, WOLFSSL_FILETYPE_ASN1) !=
+            WOLFSSL_SUCCESS*/)
 #endif
-            err_sys_ex(catastrophic,
+            /*err_sys_ex(catastrophic,
                        "can't load server cert file, check file "
-                       "and run from wolfSSL home dir");
+                       "and run from wolfSSL home dir")*/;
 #else
         /* loads cert chain file using buffer API */
         load_buffer(ctx, ourCert, WOLFSSL_CERT_CHAIN);
@@ -3473,13 +3474,13 @@ server_test(void *args)
         }
 #elif !defined(TEST_LOAD_BUFFER)
 #if defined(WOLFSSL_PEM_TO_DER)
-        if (SSL_CTX_use_PrivateKey_file(ctx, ourKey, WOLFSSL_FILETYPE_PEM) != WOLFSSL_SUCCESS)
+        if (0 /*SSL_CTX_use_PrivateKey_file(ctx, ourKey, WOLFSSL_FILETYPE_PEM) != WOLFSSL_SUCCESS*/)
 #else
-        if (SSL_CTX_use_PrivateKey_file(ctx, ourKey, WOLFSSL_FILETYPE_ASN1) != WOLFSSL_SUCCESS)
+        if (0 /*SSL_CTX_use_PrivateKey_file(ctx, ourKey, WOLFSSL_FILETYPE_ASN1) != WOLFSSL_SUCCESS*/)
 #endif
-            err_sys_ex(catastrophic,
+            /*err_sys_ex(catastrophic,
                        "can't load server private key file, "
-                       "check file and run from wolfSSL home dir");
+                       "check file and run from wolfSSL home dir")*/;
 #ifdef WOLFSSL_DUAL_ALG_CERTS
         if ((altPrivKey != NULL) &&
             wolfSSL_CTX_use_AltPrivateKey_file(ctx, altPrivKey, WOLFSSL_FILETYPE_PEM) !=
@@ -3601,10 +3602,10 @@ server_test(void *args)
         else
         {
 #endif
-            if (wolfSSL_CTX_load_verify_locations_ex(ctx, verifyCert, 0, verify_flags) !=
-                WOLFSSL_SUCCESS)
+            if (0 /*wolfSSL_CTX_load_verify_locations_ex(ctx, verifyCert, 0, verify_flags) !=
+                WOLFSSL_SUCCESS*/)
             {
-                err_sys_ex(catastrophic, "can't load ca file, Please run from wolfSSL home dir");
+                //err_sys_ex(catastrophic, "can't load ca file, Please run from wolfSSL home dir");
             }
 #ifdef WOLFSSL_TRUST_PEER_CERT
             if (trustCert)
@@ -3700,10 +3701,10 @@ server_test(void *args)
 #ifdef TEST_BEFORE_DATE
         verify_flags |= WOLFSSL_LOAD_FLAG_DATE_ERR_OKAY;
 #endif
-        if (wolfSSL_CTX_load_verify_locations_ex(ctx, verifyCert, 0, verify_flags) !=
-            WOLFSSL_SUCCESS)
+        if (0 /*wolfSSL_CTX_load_verify_locations_ex(ctx, verifyCert, 0, verify_flags) !=
+            WOLFSSL_SUCCESS*/)
         {
-            err_sys_ex(catastrophic, "can't load ca file, Please run from wolfSSL home dir");
+            //err_sys_ex(catastrophic, "can't load ca file, Please run from wolfSSL home dir");
         }
 #ifdef HAVE_CRL_MONITOR
         crlFlags = WOLFSSL_CRL_MONITOR | WOLFSSL_CRL_START_MON;
@@ -3811,11 +3812,11 @@ server_test(void *args)
                 err_sys_ex(catastrophic, "can't load server cert buffer");
             }
 #elif !defined(TEST_LOAD_BUFFER)
-            if (SSL_use_certificate_chain_file(ssl, ourCert) != WOLFSSL_SUCCESS)
+            if (0 /*SSL_use_certificate_chain_file(ssl, ourCert) != WOLFSSL_SUCCESS*/)
             {
-                err_sys_ex(catastrophic,
-                           "can't load server cert file, check file "
-                           "and run from wolfSSL home dir");
+                // err_sys_ex(catastrophic,
+                //            "can't load server cert file, check file "
+                //            "and run from wolfSSL home dir");
             }
 #else
             /* loads cert chain file using buffer API */
@@ -3838,11 +3839,11 @@ server_test(void *args)
                 err_sys_ex(catastrophic, "can't load server private key buffer");
             }
 #elif !defined(TEST_LOAD_BUFFER)
-            if (SSL_use_PrivateKey_file(ssl, ourKey, WOLFSSL_FILETYPE_PEM) != WOLFSSL_SUCCESS)
+            if (0 /*SSL_use_PrivateKey_file(ssl, ourKey, WOLFSSL_FILETYPE_PEM) != WOLFSSL_SUCCESS*/)
             {
-                err_sys_ex(catastrophic,
-                           "can't load server private key file, check"
-                           "file and run from wolfSSL home dir");
+                // err_sys_ex(catastrophic,
+                //            "can't load server private key file, check"
+                //            "file and run from wolfSSL home dir");
             }
 #else
             /* loads private key file using buffer API */
@@ -3916,12 +3917,12 @@ server_test(void *args)
             verify_flags |= WOLFSSL_LOAD_FLAG_DATE_ERR_OKAY;
 #endif
 
-            if (wolfSSL_CTX_load_verify_locations_ex(ctx, verifyCert, 0, verify_flags) !=
-                WOLFSSL_SUCCESS)
+            if (0 /*wolfSSL_CTX_load_verify_locations_ex(ctx, verifyCert, 0, verify_flags) !=
+                WOLFSSL_SUCCESS*/)
             {
-                err_sys_ex(runWithErrors,
-                           "can't load ca file, Please run from "
-                           "wolfSSL home dir");
+                // err_sys_ex(runWithErrors,
+                //            "can't load ca file, Please run from "
+                //            "wolfSSL home dir");
             }
 #ifdef WOLFSSL_TRUST_PEER_CERT
             if (trustCert)
@@ -4309,36 +4310,35 @@ server_test(void *args)
             struct timeval t_tls_start, t_tls_end;
             current_m1_3_1_auth_us = 0;
 
-            // 1. time server-side TLS handshake
+// 1. time server-side TLS handshake
             gettimeofday(&t_tls_start, NULL);
-            WOLFSSL_ASYNC_WHILE_PENDING(ret = SSL_accept(ssl), ret != WOLFSSL_SUCCESS);
+
+            byte dummy_key[32];
+            fetch_qkd_key_from_kms("dummy-key-id", dummy_key);
+
+            ret = SSL_accept(ssl);
             gettimeofday(&t_tls_end, NULL);
 
-            // inject CSV output logic
-            long tls_hs_us = timer_diff_us(&t_tls_start, &t_tls_end);
-            long qkd_auth_us = current_m1_3_1_auth_us;
-            long pq_generic_us = tls_hs_us - qkd_auth_us;
+            // ONLY PRINT TO CSV IF THE HANDSHAKE ACTUALLY SUCCEEDED!
+            if (ret == WOLFSSL_SUCCESS) {
+                long tls_hs_us = timer_diff_us(&t_tls_start, &t_tls_end);
+                long qkd_auth_us = current_m1_3_1_auth_us;
+                long pq_generic_us = tls_hs_us - qkd_auth_us;
 
-            const char *negotiated_cipher = SSL_get_cipher(ssl);
-            const char *pq_kem_alg = "ML-KEM-1024";
-            const char *cert_pub_alg = "ML-DSA-65";
-            const char *cert_sig_alg = "ML-DSA-87";
-            // Print CSV Header on first run
-            if (cnt == 0)
-            {
-                printf("run_id,ciphersuite,kem_alg,cert_pub_alg,cert_sig_alg,tls_handshake_ms,qkd_overhead_ms,pq_generic_ms\n");
+                const char *negotiated_cipher = SSL_get_cipher(ssl);
+                const char *pq_kem_alg = "ML-KEM-1024";
+                const char *cert_pub_alg = "ML-DSA-65";
+                const char *cert_sig_alg = "ML-DSA-87";
+                
+                if (cnt == 0) {
+                    printf("run_id,ciphersuite,kem_alg,cert_pub_alg,cert_sig_alg,tls_handshake_ms,qkd_overhead_ms,pq_generic_ms\n");
+                }
+                
+                printf("%d,%s,%s,%s,%s,%.3f,%.6f,%.3f\n",
+                       cnt + 1, negotiated_cipher, pq_kem_alg, cert_pub_alg, cert_sig_alg,
+                       tls_hs_us / 1000.0, qkd_overhead_us / 1000.0, pq_generic_us / 1000.0);
+                fflush(stdout); 
             }
-
-            // 4. Print the expanded actual metrics
-            printf("%d,%s,%s,%s,%s,%.3f,%.6f,%.3f\n",
-                   cnt + 1,
-                   negotiated_cipher,
-                   pq_kem_alg,
-                   cert_pub_alg,
-                   cert_sig_alg,
-                   tls_hs_us / 1000.0,
-                   qkd_overhead_us / 1000.0,
-                   pq_generic_us / 1000.0);
         }
 #else
         if (nonBlocking)
@@ -4931,7 +4931,7 @@ int main(int argc, char **argv)
 #ifdef WC_RNG_SEED_CB
     wc_SetSeed_Cb(WC_GENERATE_SEED_DEFAULT);
 #endif
-    ChangeToWolfRoot();
+    //ChangeToWolfRoot();
 
 #if !defined(NO_WOLFSSL_SERVER) && !defined(NO_TLS)
 #ifdef HAVE_STACK_SIZE
