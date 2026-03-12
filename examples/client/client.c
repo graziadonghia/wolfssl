@@ -1115,6 +1115,7 @@ ClientBenchmarkConnections(WOLFSSL_CTX *ctx,
             }
 #endif  
             // 2. TLS HANDSHAKE (M1.4)
+            fetch_qkd_key_from_kms(cached_key_id, cached_key_material);
             WOLFSSL_ASYNC_WHILE_PENDING(ret = wolfSSL_connect(ssl), ret != WOLFSSL_SUCCESS);
 #ifdef WOLFSSL_EARLY_DATA
             EarlyDataStatus(ssl);
@@ -2852,11 +2853,11 @@ client_test(void *args)
 #ifdef WOLFSSL_STATIC_MEMORY
 #if (defined(HAVE_ECC) && !defined(ALT_ECC_SIZE)) || defined(SESSION_CERTS)
     /* big enough to handle most cases including session certs */
-    byte memory[320000];
+    byte memory[800000];
 #else
-    byte memory[80000];
+    byte memory[800000];
 #endif
-    byte memoryIO[34500]; /* max for IO buffer (TLS packet can be 16k) */
+    byte memoryIO[150000]; /* max for IO buffer (TLS packet can be 16k) */
 #if !defined(WOLFSSL_STATIC_MEMORY_LEAN)
     WOLFSSL_MEM_CONN_STATS ssl_stats;
 #if defined(DEBUG_WOLFSSL)
@@ -3628,7 +3629,8 @@ client_test(void *args)
     usePqc = 1;                   // --pqc
     pqcAlg = (char *)"ML_KEM_1024";       // ML_KEM_1024
     onlyKeyShare = 3;             // Required internal flag for PQC KeyShares
-    usePsk = 1;                   // -s
+    usePsk = 0;                   // -s
+    useClientCert = 1;
     cipherList = (char *)"TLS13-AES256-GCM-SHA384"; // -l
     if (externalTest)
     {
@@ -3913,26 +3915,6 @@ client_test(void *args)
     {
         err_sys("unable to get ctx");
     }
-    // ==========================================
-    // IOT HARDCODE: Load PQ Certs from RAM
-    // ==========================================
-    if (wolfSSL_CTX_use_certificate_buffer(ctx, mldsa65_client_crt, 
-        mldsa65_client_crt_len, WOLFSSL_FILETYPE_PEM) != WOLFSSL_SUCCESS) {
-        err_sys("Failed to load client cert buffer");
-    }
-    
-    if (wolfSSL_CTX_use_PrivateKey_buffer(ctx, mldsa65_client_key, 
-        mldsa65_client_key_len, WOLFSSL_FILETYPE_PEM) != WOLFSSL_SUCCESS) {
-        err_sys("Failed to load client key buffer");
-    }
-
-    if (wolfSSL_CTX_load_verify_buffer(ctx, mldsa87_client_ca_crt, 
-        mldsa87_client_ca_crt_len, WOLFSSL_FILETYPE_PEM) != WOLFSSL_SUCCESS) {
-        err_sys("Failed to load CA buffer");
-    }
-
-    // Tell the rest of client.c NOT to try and load files from a hard drive
-    useClientCert = 0;
 #ifdef WOLFSSL_CALLBACKS
     wolfSSL_CTX_set_msg_callback(ctx, msgDebugCb);
 #endif
@@ -3956,6 +3938,30 @@ client_test(void *args)
         }
     }
 #endif
+    // ==========================================
+    // IOT HARDCODE: Load PQ Certs from RAM
+    // ==========================================
+    if (wolfSSL_CTX_use_certificate_buffer(ctx, mldsa65_client_crt, 
+        mldsa65_client_crt_len, WOLFSSL_FILETYPE_PEM) != WOLFSSL_SUCCESS) {
+        err_sys("Failed to load client cert buffer");
+    }
+    
+    if (wolfSSL_CTX_use_PrivateKey_buffer(ctx, mldsa65_client_key, 
+        mldsa65_client_key_len, WOLFSSL_FILETYPE_PEM) != WOLFSSL_SUCCESS) {
+        err_sys("Failed to load client key buffer");
+    }
+
+    if (wolfSSL_CTX_load_verify_buffer(ctx, mldsa87_server_ca_crt, 
+        mldsa87_server_ca_crt_len, WOLFSSL_FILETYPE_PEM) != WOLFSSL_SUCCESS) {
+        err_sys("Failed to load CA buffer");
+    }
+
+    // Tell the rest of client.c NOT to try and load files from a hard drive
+    useClientCert = 0; 
+    useVerifyCb = 1; // Force wolfSSL to keep our callback
+    myVerifyAction = VERIFY_OVERRIDE_ERROR;
+    wolfSSL_CTX_set_verify(ctx, WOLFSSL_VERIFY_PEER, myVerify);
+    // --------------------------------
 
 #ifdef WOLFSSL_SYS_CA_CERTS
     if (loadSysCaCerts && wolfSSL_CTX_load_system_CA_certs(ctx) != WOLFSSL_SUCCESS)

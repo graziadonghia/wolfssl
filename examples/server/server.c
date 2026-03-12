@@ -384,7 +384,7 @@ int catastrophic = 0;   /* Use with -x flag to still exit when an error is
                          * cert to send to clients attempting to connect. The
                          * server should error out completely in that case
                          */
-static int quieter = 0; /* Print fewer messages. This is helpful with overly
+static int quieter = 1; /* Print fewer messages. This is helpful with overly
                          * ambitious log parsers. */
 static int lng_index = 0;
 
@@ -2156,14 +2156,14 @@ server_test(void *args)
     ((defined(HAVE_ED25519) && !defined(NO_ED25519_CLIENT_AUTH)) || \
      (defined(HAVE_ED448) && !defined(NO_ED448_CLIENT_AUTH)))
     /* increase is due to EdDSA_Update */
-    byte memory[440000];
+    byte memory[800000];
 #else
-    byte memory[320000];
+    byte memory[800000];
 #endif
 #else
     byte memory[80000];
 #endif
-    byte memoryIO[34500]; /* max for IO buffer (TLS packet can be 16k) */
+    byte memoryIO[150000]; /* max for IO buffer (TLS packet can be 16k) */
 #if !defined(WOLFSSL_STATIC_MEMORY_LEAN)
     WOLFSSL_MEM_CONN_STATS ssl_stats;
 #if defined(DEBUG_WOLFSSL)
@@ -3005,10 +3005,11 @@ server_test(void *args)
     usePqc = 1;                                     // --pqc
     pqcAlg = (char *)"ML_KEM_1024";                 // ML_KEM_1024
     onlyKeyShare = 3;                               // Required internal flag for PQC KeyShares
-    usePsk = 1;                                     // -s
-    usePskPlus = 1;                                 // -j
+    usePsk = 0;                                     // -s
+    usePskPlus = 0;                                 // -j
     cipherList = (char *)"TLS13-AES256-GCM-SHA384"; // -l
     /* Can only use DTLS over UDP or SCTP, can't do both. */
+    mutualAuth = 0;
     if (dtlsUDP && dtlsSCTP)
     {
         err_sys_ex(runWithErrors, "Cannot use DTLS with both UDP and SCTP.");
@@ -3239,9 +3240,16 @@ server_test(void *args)
     {
         err_sys("Failed to load server key buffer");
     }
-
+    // ---> LOAD THE CLIENT'S CA <---
+    if (wolfSSL_CTX_load_verify_buffer(ctx, mldsa87_client_ca_crt, 
+                                       mldsa87_client_ca_crt_len, WOLFSSL_FILETYPE_PEM) != WOLFSSL_SUCCESS) {
+        err_sys("Failed to load CA buffer on server");
+    }
     // Tell the rest of server.c NOT to try and load files from a hard drive
     loadCertKeyIntoSSLObj = 0;
+    myVerifyAction = VERIFY_OVERRIDE_ERROR;
+    wolfSSL_CTX_set_verify(ctx, WOLFSSL_VERIFY_PEER | WOLFSSL_VERIFY_FAIL_IF_NO_PEER_CERT, myVerify);
+    doCliCertCheck = 0;
     if (minVersion != SERVER_INVALID_VERSION)
     {
 #ifdef WOLFSSL_DTLS
