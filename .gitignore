@@ -480,3 +480,4 @@ wolfssl/debug-trace-error-codes.h
 wolfssl/debug-untrace-error-codes.h
 
 *.info
+certs/pq_certs/
