@@ -837,7 +837,7 @@ ClientBenchmarkConnections(WOLFSSL_CTX *ctx,
             const char *cert_sig_alg = "ML-DSA-87";
             // print CSV header on first run
             if (i == 0) {
-                printf("\nrun_id,ciphersuite,kem_alg,cert_pub_alg,cert_sig_alg,tcp_setup_ms,tls_handshake_ms,qkd_overhead_ms,pq_generic_ms\n");
+                printf("run_id,ciphersuite,kem_alg,cert_pub_alg,cert_sig_alg,tcp_setup_ms,tls_handshake_ms,qkd_overhead_ms,pq_generic_ms\n");
             }
             
             // 4. Print the expanded actual metrics

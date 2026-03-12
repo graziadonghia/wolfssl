@@ -4326,7 +4326,7 @@ server_test(void *args)
             // Print CSV Header on first run
             if (cnt == 0)
             {
-                printf("\nrun_id,ciphersuite,kem_alg,cert_pub_alg,cert_sig_alg,tls_handshake_ms,qkd_overhead_ms,pq_generic_ms\n");
+                printf("run_id,ciphersuite,kem_alg,cert_pub_alg,cert_sig_alg,tls_handshake_ms,qkd_overhead_ms,pq_generic_ms\n");
             }
 
             // 4. Print the expanded actual metrics

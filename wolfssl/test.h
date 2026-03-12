@@ -1687,7 +1687,7 @@ static WC_INLINE void tcp_listen(SOCKET_T* sockfd, word16* port, int useAnyAddr,
             }
         }
     #endif
-    fprintf(stderr, "listening on port %d\n", *port);
+    //fprintf(stderr, "listening on port %d\n", *port);
 }
 
 
