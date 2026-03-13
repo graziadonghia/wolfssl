@@ -61,10 +61,11 @@ static const char *wolfsentry_config_path = NULL;
 #include <wolfssl/wolfcrypt/coding.h>
 #include <wolfssl/wolfcrypt/hmac.h>
 
+#define MUTUAL_AUTHENTICATION 0
 // PQ certificates hardcoded
-#include "certs/pq_certs/mldsa65_client_crt.h"
-#include "certs/pq_certs/mldsa65_client_key.h"
-#include "certs/pq_certs/mldsa87_server_ca_crt.h"
+#include "certs/pq_certs/mldsa44_client_crt.h"
+#include "certs/pq_certs/mldsa44_client_key.h"
+#include "certs/pq_certs/mldsa44_server_ca_crt.h"
 
 // =================== testing =====================
 #include <sys/time.h>
@@ -1135,13 +1136,13 @@ ClientBenchmarkConnections(WOLFSSL_CTX *ctx,
             long pq_generic_us = tls_handshake_us - qkd_auth_us;
             // dynamically extract negotiated cipher
             const char *negotiated_cipher = wolfSSL_get_cipher(ssl);
-            const char *pq_kem_alg = "ML-KEM-1024";
-            const char *cert_pub_alg = "ML-DSA-65";
-            const char *cert_sig_alg = "ML-DSA-87";
+            const char *pq_kem_alg = "ML_KEM_512";
+            const char *cert_pub_alg = "ML_DSA_65";
+            const char *cert_sig_alg = "ML_DSA_65";
             // print CSV header on first run
-            if (i == 0) {
-                printf("run_id,ciphersuite,kem_alg,cert_pub_alg,cert_sig_alg,tcp_setup_ms,tls_handshake_ms,qkd_overhead_ms,pq_generic_ms\n");
-            }
+            // if (i == 0) {
+            //     printf("run_id,ciphersuite,kem_alg,cert_pub_alg,cert_sig_alg,tcp_setup_ms,tls_handshake_ms,qkd_overhead_ms,pq_generic_ms\n");
+            // }
             
             // 4. Print the expanded actual metrics
             printf("%d,%s,%s,%s,%s,%.3f,%.3f,%.6f,%.3f\n",
@@ -3625,12 +3626,13 @@ client_test(void *args)
     quieter = 1; // suppress messages
     benchmark = 1000;
     version = 4;                  // -v 4 (TLS 1.3)
-    host = (char *)"10.0.44.1";     // -h (NOTE: Change this to your Server Node's IPv6/IP later!)
+    host = (char *)"10.0.44.100";     // -h (NOTE: Change this to your Server Node's IPv6/IP later!)
     usePqc = 1;                   // --pqc
-    pqcAlg = (char *)"ML_KEM_1024";       // ML_KEM_1024
+    pqcAlg = (char *)"ML_KEM_512";       
     onlyKeyShare = 3;             // Required internal flag for PQC KeyShares
     usePsk = 0;                   // -s
     useClientCert = 1;
+    
     cipherList = (char *)"TLS13-AES256-GCM-SHA384"; // -l
     if (externalTest)
     {
@@ -3941,21 +3943,23 @@ client_test(void *args)
     // ==========================================
     // IOT HARDCODE: Load PQ Certs from RAM
     // ==========================================
-    if (wolfSSL_CTX_use_certificate_buffer(ctx, mldsa65_client_crt, 
-        mldsa65_client_crt_len, WOLFSSL_FILETYPE_PEM) != WOLFSSL_SUCCESS) {
+    #if MUTUAL_AUTHENTICATION
+    if (wolfSSL_CTX_use_certificate_buffer(ctx, mldsa44_client_crt, 
+        mldsa44_client_crt_len, WOLFSSL_FILETYPE_PEM) != WOLFSSL_SUCCESS) {
         err_sys("Failed to load client cert buffer");
     }
     
-    if (wolfSSL_CTX_use_PrivateKey_buffer(ctx, mldsa65_client_key, 
-        mldsa65_client_key_len, WOLFSSL_FILETYPE_PEM) != WOLFSSL_SUCCESS) {
+    if (wolfSSL_CTX_use_PrivateKey_buffer(ctx, mldsa44_client_key, 
+        mldsa44_client_key_len, WOLFSSL_FILETYPE_PEM) != WOLFSSL_SUCCESS) {
         err_sys("Failed to load client key buffer");
     }
+    #endif
+    
 
-    if (wolfSSL_CTX_load_verify_buffer(ctx, mldsa87_server_ca_crt, 
-        mldsa87_server_ca_crt_len, WOLFSSL_FILETYPE_PEM) != WOLFSSL_SUCCESS) {
+    if (wolfSSL_CTX_load_verify_buffer(ctx, mldsa44_server_ca_crt, 
+        mldsa44_server_ca_crt_len, WOLFSSL_FILETYPE_PEM) != WOLFSSL_SUCCESS) {
         err_sys("Failed to load CA buffer");
     }
-
     // Tell the rest of client.c NOT to try and load files from a hard drive
     useClientCert = 0; 
     useVerifyCb = 1; // Force wolfSSL to keep our callback

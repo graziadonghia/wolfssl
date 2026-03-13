@@ -76,11 +76,14 @@ static const char *wolfsentry_config_path = NULL;
 #include <wolfssl/error-ssl.h>
 #include <wolfssl/test.h>
 
+#define MUTUAL_AUTHENTICATION 0
+
 // PQ certificates hardcoded
 #include "certs/pq_certs/mldsa65_server_crt.h"
 #include "certs/pq_certs/mldsa65_server_key.h"
-#include "certs/pq_certs/mldsa87_client_ca_crt.h"
-
+#if MUTUAL_AUTHENTICATION
+#include "certs/pq_certs/mldsa65_client_ca_crt.h"
+#endif
 // =================== testing =====================
 #include <sys/time.h>
 
@@ -929,7 +932,7 @@ ServerRead(WOLFSSL *ssl, char *input, int inputLen)
     {
         /* null terminate message */
         input[ret] = '\0';
-        printf("Client message: %s\n", input);
+        //printf("Client message: %s\n", input);
     }
 }
 
@@ -3003,7 +3006,7 @@ server_test(void *args)
     version = 4;                                    // -v 4
     useAnyAddr = 1;                                 // -b
     usePqc = 1;                                     // --pqc
-    pqcAlg = (char *)"ML_KEM_1024";                 // ML_KEM_1024
+    pqcAlg = (char *)"ML_KEM_512";                 
     onlyKeyShare = 3;                               // Required internal flag for PQC KeyShares
     usePsk = 0;                                     // -s
     usePskPlus = 0;                                 // -j
@@ -3240,16 +3243,21 @@ server_test(void *args)
     {
         err_sys("Failed to load server key buffer");
     }
-    // ---> LOAD THE CLIENT'S CA <---
-    if (wolfSSL_CTX_load_verify_buffer(ctx, mldsa87_client_ca_crt, 
-                                       mldsa87_client_ca_crt_len, WOLFSSL_FILETYPE_PEM) != WOLFSSL_SUCCESS) {
-        err_sys("Failed to load CA buffer on server");
-    }
-    // Tell the rest of server.c NOT to try and load files from a hard drive
     loadCertKeyIntoSSLObj = 0;
-    myVerifyAction = VERIFY_OVERRIDE_ERROR;
-    wolfSSL_CTX_set_verify(ctx, WOLFSSL_VERIFY_PEER | WOLFSSL_VERIFY_FAIL_IF_NO_PEER_CERT, myVerify);
+    #if MUTUAL_AUTHENTICATION
+    // ---> LOAD THE CLIENT'S CA <---
+    if (wolfSSL_CTX_load_verify_buffer(ctx, mldsa65_client_ca_crt, 
+        mldsa65_client_ca_crt_len, WOLFSSL_FILETYPE_PEM) != WOLFSSL_SUCCESS) {
+            err_sys("Failed to load CA buffer on server");
+        }
+        // Tell the rest of server.c NOT to try and load files from a hard drive
+        myVerifyAction = VERIFY_OVERRIDE_ERROR;
+        wolfSSL_CTX_set_verify(ctx, WOLFSSL_VERIFY_PEER | WOLFSSL_VERIFY_FAIL_IF_NO_PEER_CERT, myVerify);
+        
+    #else 
     doCliCertCheck = 0;
+    wolfSSL_CTX_set_verify(ctx, WOLFSSL_VERIFY_NONE, NULL);
+    #endif
     if (minVersion != SERVER_INVALID_VERSION)
     {
 #ifdef WOLFSSL_DTLS
@@ -4334,13 +4342,13 @@ server_test(void *args)
                 long pq_generic_us = tls_hs_us - qkd_auth_us;
 
                 const char *negotiated_cipher = SSL_get_cipher(ssl);
-                const char *pq_kem_alg = "ML-KEM-1024";
-                const char *cert_pub_alg = "ML-DSA-65";
-                const char *cert_sig_alg = "ML-DSA-87";
+                const char *pq_kem_alg = "ML_KEM_512";
+                const char *cert_pub_alg = "ML_DSA_65";
+                const char *cert_sig_alg = "ML_DSA_65";
                 
-                if (cnt == 0) {
-                    printf("run_id,ciphersuite,kem_alg,cert_pub_alg,cert_sig_alg,tls_handshake_ms,qkd_overhead_ms,pq_generic_ms\n");
-                }
+                // if (cnt == 0) {
+                //     printf("run_id,ciphersuite,kem_alg,cert_pub_alg,cert_sig_alg,tls_handshake_ms,qkd_overhead_ms,pq_generic_ms\n");
+                // }
                 
                 printf("%d,%s,%s,%s,%s,%.3f,%.6f,%.3f\n",
                        cnt + 1, negotiated_cipher, pq_kem_alg, cert_pub_alg, cert_sig_alg,
