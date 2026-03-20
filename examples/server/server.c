@@ -79,10 +79,10 @@ static const char *wolfsentry_config_path = NULL;
 #define MUTUAL_AUTHENTICATION 0
 
 // PQ certificates hardcoded
-#include "certs/pq_certs/mldsa65_server_crt.h"
-#include "certs/pq_certs/mldsa65_server_key.h"
+#include "certs/pq_certs/mldsa44_server_crt.h"
+#include "certs/pq_certs/mldsa44_server_key.h"
 #if MUTUAL_AUTHENTICATION
-#include "certs/pq_certs/mldsa65_client_ca_crt.h"
+#include "certs/pq_certs/mldsa44_client_ca_crt.h"
 #endif
 // =================== testing =====================
 #include <sys/time.h>
@@ -3232,22 +3232,22 @@ server_test(void *args)
     // ==========================================
     // IOT HARDCODE: Load PQ Certs from RAM
     // ==========================================
-    if (wolfSSL_CTX_use_certificate_buffer(ctx, mldsa65_server_crt,
-                                           mldsa65_server_crt_len, WOLFSSL_FILETYPE_PEM) != WOLFSSL_SUCCESS)
+    if (wolfSSL_CTX_use_certificate_buffer(ctx, mldsa44_server_crt,
+                                           mldsa44_server_crt_len, WOLFSSL_FILETYPE_PEM) != WOLFSSL_SUCCESS)
     {
         err_sys("Failed to load server cert buffer");
     }
 
-    if (wolfSSL_CTX_use_PrivateKey_buffer(ctx, mldsa65_server_key,
-                                          mldsa65_server_key_len, WOLFSSL_FILETYPE_PEM) != WOLFSSL_SUCCESS)
+    if (wolfSSL_CTX_use_PrivateKey_buffer(ctx, mldsa44_server_key,
+                                          mldsa44_server_key_len, WOLFSSL_FILETYPE_PEM) != WOLFSSL_SUCCESS)
     {
         err_sys("Failed to load server key buffer");
     }
     loadCertKeyIntoSSLObj = 0;
     #if MUTUAL_AUTHENTICATION
     // ---> LOAD THE CLIENT'S CA <---
-    if (wolfSSL_CTX_load_verify_buffer(ctx, mldsa65_client_ca_crt, 
-        mldsa65_client_ca_crt_len, WOLFSSL_FILETYPE_PEM) != WOLFSSL_SUCCESS) {
+    if (wolfSSL_CTX_load_verify_buffer(ctx, mldsa44_client_ca_crt, 
+        mldsa44_client_ca_crt_len, WOLFSSL_FILETYPE_PEM) != WOLFSSL_SUCCESS) {
             err_sys("Failed to load CA buffer on server");
         }
         // Tell the rest of server.c NOT to try and load files from a hard drive
@@ -4346,13 +4346,13 @@ server_test(void *args)
                 const char *cert_pub_alg = "ML_DSA_65";
                 const char *cert_sig_alg = "ML_DSA_65";
                 
-                // if (cnt == 0) {
-                //     printf("run_id,ciphersuite,kem_alg,cert_pub_alg,cert_sig_alg,tls_handshake_ms,qkd_overhead_ms,pq_generic_ms\n");
-                // }
+                if (cnt == 0) {
+                    printf("run_id,ciphersuite,kem_alg,cert_pub_alg,cert_sig_alg,tls_handshake_ms,pq_generic_ms\n");
+                }
                 
-                printf("%d,%s,%s,%s,%s,%.3f,%.6f,%.3f\n",
+                printf("%d,%s,%s,%s,%s,%.3f,%.3f\n",
                        cnt + 1, negotiated_cipher, pq_kem_alg, cert_pub_alg, cert_sig_alg,
-                       tls_hs_us / 1000.0, qkd_overhead_us / 1000.0, pq_generic_us / 1000.0);
+                       tls_hs_us / 1000.0, pq_generic_us / 1000.0);
                 fflush(stdout); 
             }
         }

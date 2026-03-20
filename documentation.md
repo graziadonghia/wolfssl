@@ -207,7 +207,9 @@ $ ./examples/client/client -v 4 -h 172.30.0.20 -c certs/pq_certs/mldsa65_client.
 #### Generate Binary file
 ```
 $ make clean
-$ ./configure --host=arm-linux-gnueabihf \
+$ ./configure \
+            --build=x86_64-pc-linux-gnu \
+            --host=arm-linux-gnueabihf \
             CC=arm-linux-gnueabihf-gcc \
             AR=arm-linux-gnueabihf-ar \
             STRIP=arm-linux-gnueabihf-strip \

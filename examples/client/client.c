@@ -63,10 +63,12 @@ static const char *wolfsentry_config_path = NULL;
 
 #define MUTUAL_AUTHENTICATION 0
 // PQ certificates hardcoded
-#include "certs/pq_certs/mldsa65_client_crt.h"
-#include "certs/pq_certs/mldsa65_client_key.h"
-#include "certs/pq_certs/mldsa65_server_ca_crt.h"
+#include "certs/pq_certs/mldsa44_server_ca_crt.h"
 
+#if MUTUAL_AUTHENTICATION
+#include "certs/pq_certs/mldsa44_client_crt.h"
+#include "certs/pq_certs/mldsa44_client_key.h"
+#endif
 // =================== testing =====================
 #include <sys/time.h>
 
@@ -1122,44 +1124,37 @@ ClientBenchmarkConnections(WOLFSSL_CTX *ctx,
             EarlyDataStatus(ssl);
 #endif  
             gettimeofday(&t_tls, NULL);
-            if (ret != WOLFSSL_SUCCESS)
+            if (ret == WOLFSSL_SUCCESS)
             {
-                err_sys("SSL_connect failed");
+                // ONLY calculate and print metrics if the handshake fully succeeded!
+                long tcp_setup_us = timer_diff_us(&t_start, &t_tcp);
+                long tls_handshake_us = timer_diff_us(&t_tcp, &t_tls);
+                long qkd_auth_us = current_m1_3_1_auth_us;
+                long pq_generic_us = tls_handshake_us - qkd_auth_us;
+
+                const char *negotiated_cipher = wolfSSL_get_cipher(ssl);
+                const char *pq_kem_alg = "ML_KEM_512";
+                const char *cert_pub_alg = "ML_DSA_65";
+                const char *cert_sig_alg = "ML_DSA_65";
+                
+                if (i == 0) {
+                    printf("run_id,ciphersuite,kem_alg,cert_pub_alg,cert_sig_alg,tcp_setup_ms,tls_handshake_ms,pq_generic_ms\n");
+                }
+                
+                printf("%d,%s,%s,%s,%s,%.3f,%.3f,%.3f\n",
+                       i + 1, negotiated_cipher, pq_kem_alg, cert_pub_alg, cert_sig_alg,
+                       tcp_setup_us / 1000.0, tls_handshake_us / 1000.0, pq_generic_us / 1000.0);
+                fflush(stdout); 
+
+                wolfSSL_write(ssl, "hello", 5);
+                char dummy_reply[256];
+                wolfSSL_read(ssl, dummy_reply, sizeof(dummy_reply)-1);
             }
-
-            // inject csv output logic
-            long tcp_setup_us = timer_diff_us(&t_start, &t_tcp);
-            long tls_handshake_us = timer_diff_us(&t_tcp, &t_tls);
-            long qkd_auth_us = current_m1_3_1_auth_us;
-
-            // overall PQ + TLS match
-            long pq_generic_us = tls_handshake_us - qkd_auth_us;
-            // dynamically extract negotiated cipher
-            const char *negotiated_cipher = wolfSSL_get_cipher(ssl);
-            const char *pq_kem_alg = "ML_KEM_512";
-            const char *cert_pub_alg = "ML_DSA_65";
-            const char *cert_sig_alg = "ML_DSA_65";
-            // print CSV header on first run
-            // if (i == 0) {
-            //     printf("run_id,ciphersuite,kem_alg,cert_pub_alg,cert_sig_alg,tcp_setup_ms,tls_handshake_ms,qkd_overhead_ms,pq_generic_ms\n");
-            // }
-            
-            // 4. Print the expanded actual metrics
-            printf("%d,%s,%s,%s,%s,%.3f,%.3f,%.6f,%.3f\n",
-                   i + 1,
-                   negotiated_cipher,
-                   pq_kem_alg,
-                   cert_pub_alg,
-                   cert_sig_alg,
-                   tcp_setup_us / 1000.0,
-                   tls_handshake_us / 1000.0,
-                   qkd_overhead_us / 1000.0,
-                   pq_generic_us / 1000.0);
-            fflush(stdout); // Force Linux to instantly save the CSV row!
-            wolfSSL_write(ssl, "hello", 5);
-            char dummy_reply[256];
-            wolfSSL_read(ssl, dummy_reply, sizeof(dummy_reply)-1); // Wait for server's reply
-            // ---------------------------
+            else
+            {
+                // Print to stderr so it doesn't pollute your CSV redirect (> client_metrics_a8.csv)
+                fprintf(stderr, "Run %d: SSL_connect failed with error %d\n", i+1, wolfSSL_get_error(ssl, ret));
+            }
 #ifdef WOLFSSL_TLS13
 #ifndef NO_SESSION_CACHE
             if (version >= 4 && resumeSession && !benchResume)
@@ -3917,6 +3912,10 @@ client_test(void *args)
     {
         err_sys("unable to get ctx");
     }
+    #ifdef HAVE_PQC
+    /* Explicitly enable ML-DSA (Dilithium) signature verification for the context */
+    wolfSSL_CTX_set_verify_sig_alg(ctx, WOLFSSL_DILITHIUM);
+#endif
 #ifdef WOLFSSL_CALLBACKS
     wolfSSL_CTX_set_msg_callback(ctx, msgDebugCb);
 #endif
@@ -3944,25 +3943,25 @@ client_test(void *args)
     // IOT HARDCODE: Load PQ Certs from RAM
     // ==========================================
     #if MUTUAL_AUTHENTICATION
-    if (wolfSSL_CTX_use_certificate_buffer(ctx, mldsa65_client_crt, 
-        mldsa65_client_crt_len, WOLFSSL_FILETYPE_PEM) != WOLFSSL_SUCCESS) {
+    if (wolfSSL_CTX_use_certificate_buffer(ctx, mldsa44_client_crt, 
+        mldsa44_client_crt_len, WOLFSSL_FILETYPE_PEM) != WOLFSSL_SUCCESS) {
         err_sys("Failed to load client cert buffer");
     }
     
-    if (wolfSSL_CTX_use_PrivateKey_buffer(ctx, mldsa65_client_key, 
-        mldsa65_client_key_len, WOLFSSL_FILETYPE_PEM) != WOLFSSL_SUCCESS) {
+    if (wolfSSL_CTX_use_PrivateKey_buffer(ctx, mldsa44_client_key, 
+        mldsa44_client_key_len, WOLFSSL_FILETYPE_PEM) != WOLFSSL_SUCCESS) {
         err_sys("Failed to load client key buffer");
     }
     #endif
     
 
-    if (wolfSSL_CTX_load_verify_buffer(ctx, mldsa65_server_ca_crt, 
-        mldsa65_server_ca_crt_len, WOLFSSL_FILETYPE_PEM) != WOLFSSL_SUCCESS) {
+    if (wolfSSL_CTX_load_verify_buffer(ctx, mldsa44_server_ca_crt, 
+        mldsa44_server_ca_crt_len, WOLFSSL_FILETYPE_PEM) != WOLFSSL_SUCCESS) {
         err_sys("Failed to load CA buffer");
     }
     // Tell the rest of client.c NOT to try and load files from a hard drive
     useClientCert = 0; 
-    useVerifyCb = 1; // Force wolfSSL to keep our callback
+    useVerifyCb = 0; // Force wolfSSL to keep our callback
     myVerifyAction = VERIFY_OVERRIDE_ERROR;
     wolfSSL_CTX_set_verify(ctx, WOLFSSL_VERIFY_PEER, myVerify);
     // --------------------------------
@@ -4120,12 +4119,6 @@ client_test(void *args)
         // 2. Register the strict TLS 1.3 specific callback
         wolfSSL_CTX_set_psk_client_tls13_callback(ctx, qkd_psk_client_tls13_cb);
 #endif
-
-        // CRITICAL FIX 1: We DO NOT force a PSK-only cipher list here.
-        // We let TLS 1.3 negotiate normally so it expects certificates.
-
-        // CRITICAL FIX 2: We DO NOT set useClientCert = 0 here!
-        // We leave it alone so ML-DSA authentication still happens!
 #endif
     }
     if (useAnon)
