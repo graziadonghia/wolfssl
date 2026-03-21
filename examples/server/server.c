@@ -387,7 +387,7 @@ int catastrophic = 0;   /* Use with -x flag to still exit when an error is
                          * cert to send to clients attempting to connect. The
                          * server should error out completely in that case
                          */
-static int quieter = 1; /* Print fewer messages. This is helpful with overly
+static int quieter = 0; /* Print fewer messages. This is helpful with overly
                          * ambitious log parsers. */
 static int lng_index = 0;
 
@@ -4077,21 +4077,51 @@ server_test(void *args)
             readySignal->srfName = serverReadyFile;
         }
 
-        client_len = sizeof client_addr;
-        tcp_accept(&sockfd,
-                   &clientfd,
-                   (func_args *)args,
-                   port,
-                   useAnyAddr,
-                   dtlsUDP,
-                   dtlsSCTP,
-                   serverReadyFile ? 1 : 0,
-                   doListen,
-                   &client_addr,
-                   &client_len);
+        /* IOT HARDCODE: Force raw IPv6 POSIX sockets with strict DEBUG PRINTS */
+        if (doListen) {
+            sockfd = socket(AF_INET6, SOCK_STREAM, 0);
+            struct sockaddr_in6 serv_addr;
+            memset(&serv_addr, 0, sizeof(serv_addr));
+            serv_addr.sin6_family = AF_INET6;
+            serv_addr.sin6_port = htons(port);
+            serv_addr.sin6_addr = in6addr_any; // Listen on all IPv6 interfaces (including tun0)
+            
+            int opt = 1;
+            setsockopt(sockfd, SOL_SOCKET, SO_REUSEADDR, &opt, sizeof(opt));
+            
+            if (bind(sockfd, (struct sockaddr*)&serv_addr, sizeof(serv_addr)) < 0) {
+                perror("[DEBUG-SERVER] IPv6 Bind failed");
+                err_sys("IPv6 Bind failed.");
+            }
 
-        doListen = 0; /* Don't listen next time */
+            // Read back the socket to prove where it bound
+            struct sockaddr_in6 bound_addr;
+            socklen_t bound_len = sizeof(bound_addr);
+            getsockname(sockfd, (struct sockaddr *)&bound_addr, &bound_len);
+            char bound_ip[INET6_ADDRSTRLEN];
+            inet_ntop(AF_INET6, &bound_addr.sin6_addr, bound_ip, INET6_ADDRSTRLEN);
+            printf("\n[DEBUG-SERVER] Successfully bound to IP: %s | Port: %d\n", bound_ip, ntohs(bound_addr.sin6_port));
 
+            if (listen(sockfd, 5) < 0) {
+                perror("[DEBUG-SERVER] IPv6 Listen failed");
+                err_sys("IPv6 Listen failed");
+            }
+            printf("[DEBUG-SERVER] Listening for incoming connections on tun0...\n");
+            doListen = 0; 
+        }
+        
+        printf("[DEBUG-SERVER] Blocking on accept(). Waiting for M4 client...\n");
+        struct sockaddr_in6 cli_addr;
+        socklen_t cli_len = sizeof(cli_addr);
+        clientfd = accept(sockfd, (struct sockaddr*)&cli_addr, &cli_len);
+        if (clientfd < 0) {
+            perror("[DEBUG-SERVER] IPv6 Accept failed");
+            err_sys("IPv6 Accept failed");
+        }
+
+        char cli_ip[INET6_ADDRSTRLEN];
+        inet_ntop(AF_INET6, &cli_addr.sin6_addr, cli_ip, INET6_ADDRSTRLEN);
+        printf("[DEBUG-SERVER] >> ACCEPTED TCP CONNECTION FROM CLIENT IP: %s <<\n", cli_ip);
         if (port == 0)
         {
             port = readySignal->port;
