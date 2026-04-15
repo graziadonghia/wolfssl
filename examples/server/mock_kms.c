@@ -15,9 +15,9 @@
 void handle_coap_request(int server_sock, struct sockaddr_in6 *client_addr, socklen_t addr_len, uint8_t *buffer, int len) {
     if (len < 4) return; // Too small to be a CoAP packet
 
-    /* Extract CoAP Header info from the incoming request */
-    uint8_t tkl = buffer[0] & 0x0F; // Token Length
-    uint8_t msg_id_msb = buffer[2]; // Message ID
+    /* Extract CoAP Header info */
+    uint8_t tkl = buffer[0] & 0x0F; 
+    uint8_t msg_id_msb = buffer[2]; 
     uint8_t msg_id_lsb = buffer[3];
 
     /* Prepare the CoAP Response Buffer */
@@ -25,9 +25,9 @@ void handle_coap_request(int server_sock, struct sockaddr_in6 *client_addr, sock
     int resp_len = 0;
 
     /* 1. Build CoAP Header (ACK, 2.05 Content) */
-    resp_pkt[0] = (1 << 6) | (2 << 4) | tkl; // Version 1, Type ACK (2), TKL
-    resp_pkt[1] = 0x45;                      // Code 2.05 Content (69)
-    resp_pkt[2] = msg_id_msb;                // Echo Message ID back
+    resp_pkt[0] = (1 << 6) | (2 << 4) | tkl; 
+    resp_pkt[1] = 0x45;                      
+    resp_pkt[2] = msg_id_msb;                
     resp_pkt[3] = msg_id_lsb;
     resp_len = 4;
 
@@ -49,13 +49,6 @@ void handle_coap_request(int server_sock, struct sockaddr_in6 *client_addr, sock
         }
     }
 
-    /* ====================================================================
-     * CRITICAL FIX: The 802.15.4 TX/RX Turnaround Delay
-     * Give the Cortex-M4 radio 15ms to switch from Transmit to Receive mode
-     * before firing the UDP packet back.
-     * ==================================================================== */
-    usleep(50000); 
-
     /* Handle GET_STATUS */
     if (payload == NULL || strstr((char*)buffer, "status")) {
         const char *resp_json = "{\"source_KME_ID\":\"172.20.0.100\",\"key_size\":256}";
@@ -63,11 +56,7 @@ void handle_coap_request(int server_sock, struct sockaddr_in6 *client_addr, sock
         resp_len += strlen(resp_json);
 
         ssize_t sent = sendto(server_sock, resp_pkt, resp_len, 0, (struct sockaddr *)client_addr, addr_len);
-        if (sent < 0) {
-            perror("[CoAP KMS] ERROR: sendto failed");
-        } else {
-            printf("[CoAP KMS] Answered GET_STATUS (%zd bytes sent)\n", sent);
-        }
+        if (sent > 0) printf("[CoAP KMS] Answered GET_STATUS\n");
     }
     /* Handle POST enc_keys / dec_keys */
     else {
@@ -75,16 +64,18 @@ void handle_coap_request(int server_sock, struct sockaddr_in6 *client_addr, sock
         char *body_start = strstr(payload, "\"body\":");
 
         if (auth_tag && body_start) {
-            auth_tag += 8;
-            body_start += 7;
-
+            auth_tag += 8; // Move pointer past the "auth":" part
+            
+            /* Default to 384 */
             int hash_type = WC_HASH_TYPE_SHA3_384;
             int digest_sz = WC_SHA3_384_DIGEST_SIZE;
+            
+            /* CRITICAL FIX: Switch to 512 if requested! */
             if (strstr(payload, "SHA3-512")) {
                 hash_type = WC_HASH_TYPE_SHA3_512;
                 digest_sz = WC_SHA3_512_DIGEST_SIZE;
             }
-
+            
             /* Verify HMAC using wolfCrypt */
             Hmac hmac;
             byte mac_tag[64];
@@ -99,17 +90,21 @@ void handle_coap_request(int server_sock, struct sockaddr_in6 *client_addr, sock
                 sprintf(&hex_mac[j * 2], "%02x", mac_tag[j]);
             }
 
+            /* Compare generated HMAC against the one in the payload */
             if (strncmp(auth_tag, hex_mac, digest_sz * 2) == 0) {
                 const char *resp_json = "{\"keys\":[{\"key_ID\":\"mock-id\",\"key\":\"q6qqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqo=\"}]}";
-                memcpy(&resp_pkt[resp_len], resp_json, strlen(resp_json));
-                resp_len += strlen(resp_json);
+                int json_len = strlen(resp_json);
+                memcpy(&resp_pkt[resp_len], resp_json, json_len);
+                
+                /* ITS-OSCORE ENCRYPTION SIMULATION */
+                uint8_t dummy_otp_stream = 0xAA;
+                for (int k = 0; k < json_len; k++) {
+                    resp_pkt[resp_len + k] ^= dummy_otp_stream;
+                }
+                resp_len += json_len;
 
                 ssize_t sent = sendto(server_sock, resp_pkt, resp_len, 0, (struct sockaddr *)client_addr, addr_len);
-                if (sent < 0) {
-                    perror("[CoAP KMS] ERROR: sendto failed");
-                } else {
-                    printf("[CoAP KMS] Answered GET_KEY (HMAC verified) (%zd bytes sent)\n", sent);
-                }
+                if (sent > 0) printf("[CoAP KMS] Answered GET_KEY (Encrypted & Verified)\n");
             } else {
                 const char *err = "4.01 Unauthorized";
                 memcpy(&resp_pkt[resp_len], err, strlen(err));
@@ -127,7 +122,9 @@ int main() {
     struct sockaddr_in6 server_addr, client_addr;
     uint8_t buffer[2048];
 
-    server_sock = socket(AF_INET6, SOCK_DGRAM, 0); // UDP
+    wolfCrypt_Init(); 
+
+    server_sock = socket(AF_INET6, SOCK_DGRAM, 0);
     
     memset(&server_addr, 0, sizeof(server_addr));
     server_addr.sin6_family = AF_INET6;
@@ -143,8 +140,9 @@ int main() {
 
     while (1) {
         socklen_t addr_len = sizeof(client_addr);
-        int len = recvfrom(server_sock, buffer, sizeof(buffer), 0, (struct sockaddr *)&client_addr, &addr_len);
+        int len = recvfrom(server_sock, buffer, sizeof(buffer) - 1, 0, (struct sockaddr *)&client_addr, &addr_len);
         if (len > 0) {
+            buffer[len] = '\0'; 
             handle_coap_request(server_sock, &client_addr, addr_len, buffer, len);
         }
     }
