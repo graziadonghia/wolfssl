@@ -10,7 +10,7 @@
 #include <wolfssl/wolfcrypt/hmac.h>
 #include <wolfssl/wolfcrypt/sha3.h>
 
-#define A8_KMS_IP "2001:660:3207:400::68" /* <-- Make sure this matches your Server IP */
+#define A8_KMS_IP "2001:660:3207:400::2" /* <-- Make sure this matches your Server IP */
 #define SLAVE_SAE_ID "bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb"
 #define KMS_SECRET "ClientSecretIoTKey384BitQuantumSafe1234567890123"
 #define COAP_PORT 5683
@@ -76,7 +76,7 @@ int main(int argc, char **argv) {
     Hmac hmac;
     uint16_t msg_id = 1000;
 
-    for (int i = 0; i < 1000; i++) {
+    for (int i = 0; i < 100; i++) {
         uint64_t t_start = get_time_usec();
         int sock;
         int max_retries = 3;

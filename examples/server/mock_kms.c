@@ -8,11 +8,22 @@
 #include <wolfssl/options.h>
 #include <wolfssl/wolfcrypt/hmac.h>
 #include <wolfssl/wolfcrypt/sha3.h>
+#include <sys/time.h>
 
 #define PORT 5683
 #define KMS_SECRET "ClientSecretIoTKey384BitQuantumSafe1234567890123"
 
+double get_timestamp() {
+    struct timeval tv;
+    gettimeofday(&tv, NULL);
+    return tv.tv_sec + (tv.tv_usec / 1000000.0);
+}
+
 void handle_coap_request(int server_sock, struct sockaddr_in6 *client_addr, socklen_t addr_len, uint8_t *buffer, int len) {
+    /* State Machine to prevent UDP Retries from breaking the Python parser */
+    static int round_counter = 1;
+    static int phase = 0; /* 0 = waiting for GET, 1 = waiting for POST */
+
     if (len < 4) return; // Too small to be a CoAP packet
 
     /* Extract CoAP Header info */
@@ -56,7 +67,11 @@ void handle_coap_request(int server_sock, struct sockaddr_in6 *client_addr, sock
         resp_len += strlen(resp_json);
 
         ssize_t sent = sendto(server_sock, resp_pkt, resp_len, 0, (struct sockaddr *)client_addr, addr_len);
-        if (sent > 0) printf("[CoAP KMS] Answered GET_STATUS\n");
+        if (sent > 0) {
+            phase = 1; /* Move to POST phase */
+            printf("MARKER_START_ROUND_%d: %.6f\n", round_counter, get_timestamp());
+            // printf("[CoAP KMS] Answered GET_STATUS\n");
+        }
     }
     /* Handle POST enc_keys / dec_keys */
     else {
@@ -70,7 +85,7 @@ void handle_coap_request(int server_sock, struct sockaddr_in6 *client_addr, sock
             int hash_type = WC_HASH_TYPE_SHA3_384;
             int digest_sz = WC_SHA3_384_DIGEST_SIZE;
             
-            /* CRITICAL FIX: Switch to 512 if requested! */
+            /* Switch to 512 if requested! */
             if (strstr(payload, "SHA3-512")) {
                 hash_type = WC_HASH_TYPE_SHA3_512;
                 digest_sz = WC_SHA3_512_DIGEST_SIZE;
@@ -104,7 +119,17 @@ void handle_coap_request(int server_sock, struct sockaddr_in6 *client_addr, sock
                 resp_len += json_len;
 
                 ssize_t sent = sendto(server_sock, resp_pkt, resp_len, 0, (struct sockaddr *)client_addr, addr_len);
-                if (sent > 0) printf("[CoAP KMS] Answered GET_KEY (Encrypted & Verified)\n");
+                if (sent > 0) {
+                    /* If phase == 1, this is a fresh success. If 0, it's a UDP retry! */
+                    if (phase == 1) {
+                        printf("MARKER_END_ROUND_%d  : %.6f\n", round_counter, get_timestamp());
+                        round_counter++;
+                        phase = 0;
+                    } else {
+                        printf("MARKER_END_ROUND_%d  : %.6f (UDP Retry)\n", round_counter - 1, get_timestamp());
+                    }
+                    // printf("[CoAP KMS] Answered GET_KEY (Encrypted & Verified)\n");
+                }
             } else {
                 const char *err = "4.01 Unauthorized";
                 memcpy(&resp_pkt[resp_len], err, strlen(err));
@@ -116,7 +141,6 @@ void handle_coap_request(int server_sock, struct sockaddr_in6 *client_addr, sock
         }
     }
 }
-
 int main() {
     int server_sock;
     struct sockaddr_in6 server_addr, client_addr;
