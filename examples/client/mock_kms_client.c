@@ -76,7 +76,7 @@ int main(int argc, char **argv) {
     Hmac hmac;
     uint16_t msg_id = 1000;
 
-    for (int i = 0; i < 100; i++) {
+    for (int i = 0; i < 2; i++) {
         uint64_t t_start = get_time_usec();
         int sock;
         int max_retries = 3;
