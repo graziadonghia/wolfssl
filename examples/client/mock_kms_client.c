@@ -43,13 +43,20 @@ int main(int argc, char **argv) {
     int digest_size = WC_SHA3_384_DIGEST_SIZE;
     const char *algo_name = "SHA3-384";
 
-    if (argc > 1 && strcmp(argv[1], "512") == 0) {
+    if (argc < 2) {
+        printf("Usage: %s [512] <runs>\n", argv[0]);
+        printf("  512 - Use SHA3-512 instead of SHA3-384\n");
+        printf("  runs - Number of benchmark iterations (default: 100)\n");
+        return 1;
+    }
+
+    if (strcmp(argv[1], "512") == 0) {
         hash_type = WC_HASH_TYPE_SHA3_512;
         digest_size = WC_SHA3_512_DIGEST_SIZE;
         algo_name = "SHA3-512";
     }
-
-    printf("\nStarting AEAD Ratchet Benchmark A8 Client (%s - 100 runs)...\n", algo_name);
+    int runs = atoi(argv[2]);
+    printf("\nStarting AEAD Ratchet Benchmark A8 Client (%s - %d runs)...\n", algo_name, runs);
     wolfCrypt_Init();
 
     struct sockaddr_in6 remote;
@@ -63,7 +70,7 @@ int main(int argc, char **argv) {
         printf("\nrun_id,algo_name,t_start_us,t_auth_start_us,t_auth_end_us,t_extract_start_us,t_extract_end_us,t_ack_start_us,t_ack_end_us,auth_lat_ms,gcm_decrypt_ms,ack_rtt_ms,total_ms\n");
     }
 
-    for (int i = 0; i < 100; i++) {
+    for (int i = 0; i < runs; i++) {
         uint64_t t_start = get_time_usec();
         uint64_t t_auth_start = 0, t_auth_end = 0;
         uint64_t t_extract_start = 0, t_extract_end = 0;
@@ -79,9 +86,13 @@ int main(int argc, char **argv) {
         const char *json_body = "{\"number\": 1, \"size\": 256}";
         byte mac_tag[64]; char hex_mac[129]; 
         
+        /* FIX: Safely initialize and free HMAC state */
+        Hmac hmac = {0};
+        wc_HmacInit(&hmac, NULL, INVALID_DEVID);
         wc_HmacSetKey(&hmac, hash_type, current_k_hmac, 32);
         wc_HmacUpdate(&hmac, (const byte*)json_body, strlen(json_body));
         wc_HmacFinal(&hmac, mac_tag);
+        wc_HmacFree(&hmac);
         for (int j = 0; j < digest_size; j++) sprintf(&hex_mac[j * 2], "%02x", mac_tag[j]);
 
         char payload[512]; 
@@ -107,9 +118,12 @@ int main(int argc, char **argv) {
         if (ct_len == 124) { 
             byte *iv = ct_payload; byte *ct = ct_payload + 12; byte *tag = ct_payload + 108; byte pt[96];
 
-            Aes aes; wc_AesInit(&aes, NULL, INVALID_DEVID);
+            /* FIX: Safely initialize and free AES state */
+            Aes aes = {0}; 
+            wc_AesInit(&aes, NULL, INVALID_DEVID);
             wc_AesGcmSetKey(&aes, current_k_wrap, 32);
             dec_res = wc_AesGcmDecrypt(&aes, pt, ct, 96, iv, 12, tag, 16, NULL, 0);
+            wc_AesFree(&aes);
 
             if (dec_res == 0) {
                 memcpy(current_k_wrap, pt, 32);
@@ -122,9 +136,13 @@ int main(int argc, char **argv) {
         if (dec_res == 0) {
             t_ack_start = get_time_usec();
             const char *ack_body = "{\"status\": \"ACK_SUCCESS\"}";
-            wc_HmacSetKey(&hmac, hash_type, current_k_hmac, 32); 
-            wc_HmacUpdate(&hmac, (const byte*)ack_body, strlen(ack_body));
-            wc_HmacFinal(&hmac, mac_tag);
+            /* FIX: Re-initialize HMAC for the ACK phase */
+            Hmac hmac_ack = {0};
+            wc_HmacInit(&hmac_ack, NULL, INVALID_DEVID);
+            wc_HmacSetKey(&hmac_ack, hash_type, current_k_hmac, 32); 
+            wc_HmacUpdate(&hmac_ack, (const byte*)ack_body, strlen(ack_body));
+            wc_HmacFinal(&hmac_ack, mac_tag);
+            wc_HmacFree(&hmac_ack);
             for (int j = 0; j < digest_size; j++) sprintf(&hex_mac[j * 2], "%02x", mac_tag[j]);
 
             sprintf(payload, "{\"alg\":\"%s\",\"auth\":\"%s\",\"body\":%s}", algo_name, hex_mac, ack_body);
