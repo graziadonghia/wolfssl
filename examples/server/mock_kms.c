@@ -16,6 +16,9 @@
 
 #define PORT 5683
 
+int last_seen_seq = 0;
+double pending_timestamp = 0.0;
+#define PENDING_STATE_TTL 5.0 /* seconds */
 /* --- Dynamic Configuration --- */
 int g_hash_type = WC_HASH_TYPE_SHA3_384;
 int g_digest_size = WC_SHA3_384_DIGEST_SIZE;
@@ -27,7 +30,7 @@ int g_target_runs = 1000;
 int total_requests = 0;
 int completed_acks = 0;
 int recovered_acks = 0;
-char recovery_history[8192] = ""; /* Large buffer to hold round IDs */
+char recovery_history[8192] = ""; 
 
 /* State N (Active) */
 byte current_k_wrap[32] = {0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08, 0x09, 0x0A, 0x0B, 0x0C, 0x0D, 0x0E, 0x0F, 0x10,
@@ -48,7 +51,6 @@ double get_timestamp() {
     return tv.tv_sec + (tv.tv_usec / 1000000.0);
 }
 
-/* --- Metrics Saver & Exiter --- */
 void save_metrics_and_exit(int sig) {
     printf("\n\n======================================================\n");
     if (sig == 0) {
@@ -81,7 +83,6 @@ void save_metrics_and_exit(int sig) {
     exit(0);
 }
 
-/* Signal wrapper for Ctrl+C fallback */
 void handle_sigint(int sig) {
     save_metrics_and_exit(sig);
 }
@@ -93,7 +94,7 @@ void handle_coap_request(int server_sock, struct sockaddr_in6 *client_addr, sock
     int resp_len = 0;
 
     resp_pkt[0] = (1 << 6) | (2 << 4) | tkl; 
-    resp_pkt[1] = 0x44; /* 2.04 Changed */                     
+    resp_pkt[1] = 0x44; 
     resp_pkt[2] = buffer[2];                
     resp_pkt[3] = buffer[3];
     resp_len = 4;
@@ -109,15 +110,33 @@ void handle_coap_request(int server_sock, struct sockaddr_in6 *client_addr, sock
         if (buffer[i] == 0xFF) { payload = (char *)&buffer[i + 1]; break; }
     }
 
+    if (waiting_for_ack && (get_timestamp() - pending_timestamp) > PENDING_STATE_TTL) {
+        printf(">>> SECURITY: Pending state expired due to TTL! Dropping State N+1 to prevent exhaustion.\n");
+        waiting_for_ack = 0;
+    }
+
+    int incoming_seq = -1;
+    if (payload != NULL) {
+        char *seq_ptr = strstr(payload, "\"seq\":");
+        if (seq_ptr) {
+            incoming_seq = atoi(seq_ptr + 6);
+        }
+    }
+
     if (payload != NULL && strstr((char*)buffer, "enc_keys")) {
         char *auth_tag = strstr(payload, "\"auth\":\"");
         if (auth_tag) {
             auth_tag += 8; 
             
+            char *body_start = strstr(payload, "\"body\":{");
+            char benchmark_body[256] = {0};
+            if (body_start) {
+                char *body_end = strchr(body_start + 7, '}');
+                if (body_end) strncpy(benchmark_body, body_start + 7, (body_end - body_start) - 6);
+            }
+            
             Hmac hmac = {0};
-            byte mac_tag[64];
-            char hex_mac[129];
-            const char *benchmark_body = "{\"number\": 1, \"size\": 256}";
+            byte mac_tag[64]; char hex_mac[129];
             
             wc_HmacInit(&hmac, NULL, INVALID_DEVID);
             wc_HmacSetKey(&hmac, g_hash_type, current_k_hmac, 32);
@@ -129,10 +148,8 @@ void handle_coap_request(int server_sock, struct sockaddr_in6 *client_addr, sock
             int auth_success = 0;
 
             if (strncmp(auth_tag, hex_mac, g_digest_size * 2) == 0) {
-                total_requests++;
                 auth_success = 1;
             } 
-            /* RECOVERY: Try State N+1 Authentication */
             else if (waiting_for_ack) {
                 wc_HmacInit(&hmac, NULL, INVALID_DEVID);
                 wc_HmacSetKey(&hmac, g_hash_type, pending_k_hmac, 32);
@@ -146,48 +163,50 @@ void handle_coap_request(int server_sock, struct sockaddr_in6 *client_addr, sock
                     memcpy(current_k_wrap, pending_k_wrap, 32);
                     memcpy(current_k_hmac, pending_k_hmac, 32);
                     waiting_for_ack = 0;
-                    
-                    total_requests++;
                     recovered_acks++;
                     auth_success = 1;
-                    
-                    char history_buf[32];
-                    sprintf(history_buf, "%d ", total_requests);
-                    if (strlen(recovery_history) + strlen(history_buf) < sizeof(recovery_history)) {
-                        strcat(recovery_history, history_buf);
-                    }
                 }
             }
 
             if (auth_success) {
-                byte k_tls[32];
-                wc_RNG_GenerateBlock(&rng, pending_k_wrap, 32);
-                wc_RNG_GenerateBlock(&rng, pending_k_hmac, 32);
-                wc_RNG_GenerateBlock(&rng, k_tls, 32);
+                /* SECURITY FIX: Drop only if strictly older than the last seen sequence */
+                /* If it's equal, it means the client is retrying its current request */
+                if (incoming_seq < last_seen_seq) {
+                    printf(">>> SECURITY: Replay attack detected (Seq %d < %d)! Dropping packet.\n", incoming_seq, last_seen_seq);
+                } else {
+                    last_seen_seq = incoming_seq;
+                    total_requests++;
+                    
+                    byte k_tls[32];
+                    wc_RNG_GenerateBlock(&rng, pending_k_wrap, 32);
+                    wc_RNG_GenerateBlock(&rng, pending_k_hmac, 32);
+                    wc_RNG_GenerateBlock(&rng, k_tls, 32);
 
-                byte pt[96];
-                memcpy(pt, pending_k_wrap, 32);
-                memcpy(pt + 32, pending_k_hmac, 32);
-                memcpy(pt + 64, k_tls, 32);
+                    byte pt[96];
+                    memcpy(pt, pending_k_wrap, 32);
+                    memcpy(pt + 32, pending_k_hmac, 32);
+                    memcpy(pt + 64, k_tls, 32);
 
-                byte iv[12]; byte ct[96]; byte auth_gcm_tag[16];
-                wc_RNG_GenerateBlock(&rng, iv, 12);
+                    byte iv[12]; byte ct[96]; byte auth_gcm_tag[16];
+                    wc_RNG_GenerateBlock(&rng, iv, 12);
 
-                Aes aes = {0};
-                wc_AesInit(&aes, NULL, INVALID_DEVID);
-                wc_AesGcmSetKey(&aes, current_k_wrap, 32);
-                wc_AesGcmEncrypt(&aes, ct, pt, 96, iv, 12, auth_gcm_tag, 16, NULL, 0);
-                wc_AesFree(&aes);
+                    Aes aes = {0};
+                    wc_AesInit(&aes, NULL, INVALID_DEVID);
+                    wc_AesGcmSetKey(&aes, current_k_wrap, 32);
+                    wc_AesGcmEncrypt(&aes, ct, pt, 96, iv, 12, auth_gcm_tag, 16, NULL, 0);
+                    wc_AesFree(&aes);
 
-                memcpy(&resp_pkt[resp_len], iv, 12);
-                memcpy(&resp_pkt[resp_len + 12], ct, 96);
-                memcpy(&resp_pkt[resp_len + 108], auth_gcm_tag, 16);
-                resp_len += 124;
+                    memcpy(&resp_pkt[resp_len], iv, 12);
+                    memcpy(&resp_pkt[resp_len + 12], ct, 96);
+                    memcpy(&resp_pkt[resp_len + 108], auth_gcm_tag, 16);
+                    resp_len += 124;
 
-                waiting_for_ack = 1; 
-                sendto(server_sock, resp_pkt, resp_len, 0, (struct sockaddr *)client_addr, addr_len);
+                    waiting_for_ack = 1; 
+                    pending_timestamp = get_timestamp(); 
+                    sendto(server_sock, resp_pkt, resp_len, 0, (struct sockaddr *)client_addr, addr_len);
+                }
             } else {
-                printf("FATAL: Key Request Authentication Failed (Desync Unrecoverable)!\n");
+                printf("FATAL: Key Request Authentication Failed!\n");
             }
         }
     }
@@ -197,9 +216,15 @@ void handle_coap_request(int server_sock, struct sockaddr_in6 *client_addr, sock
             if (auth_tag) {
                 auth_tag += 8;
                 
+                char *body_start = strstr(payload, "\"body\":{");
+                char ack_body[256] = {0};
+                if (body_start) {
+                    char *body_end = strchr(body_start + 7, '}');
+                    if (body_end) strncpy(ack_body, body_start + 7, (body_end - body_start) - 6);
+                }
+
                 Hmac hmac = {0}; 
                 byte mac_tag[64]; char hex_mac[129];
-                const char *ack_body = "{\"status\": \"ACK_SUCCESS\"}";
                 
                 wc_HmacInit(&hmac, NULL, INVALID_DEVID);
                 wc_HmacSetKey(&hmac, g_hash_type, pending_k_hmac, 32);
@@ -210,22 +235,24 @@ void handle_coap_request(int server_sock, struct sockaddr_in6 *client_addr, sock
                 for (int j = 0; j < g_digest_size; j++) sprintf(&hex_mac[j * 2], "%02x", mac_tag[j]);
 
                 if (strncmp(auth_tag, hex_mac, g_digest_size * 2) == 0) {
-                    memcpy(current_k_wrap, pending_k_wrap, 32);
-                    memcpy(current_k_hmac, pending_k_hmac, 32);
-                    waiting_for_ack = 0;
-                    completed_acks++;
+                    if (incoming_seq < last_seen_seq) {
+                         printf(">>> SECURITY: Replay attack detected on ACK (Seq %d < %d)! Dropping packet.\n", incoming_seq, last_seen_seq);
+                    } else {
+                        last_seen_seq = incoming_seq;
+                        memcpy(current_k_wrap, pending_k_wrap, 32);
+                        memcpy(current_k_hmac, pending_k_hmac, 32);
+                        waiting_for_ack = 0;
+                        completed_acks++;
 
-                    const char *ok = "OK";
-                    memcpy(&resp_pkt[resp_len], ok, 2);
-                    resp_len += 2;
-                    sendto(server_sock, resp_pkt, resp_len, 0, (struct sockaddr *)client_addr, addr_len);
-                    // printf("Handshake %f: ACK received. State N+1 committed.\n", get_timestamp());
-                    
-                    /* EXIT CHECK: Did we hit our target runs? */
-                    if ((completed_acks + recovered_acks) >= g_target_runs) {
-                        save_metrics_and_exit(0);
+                        const char *ok = "OK";
+                        memcpy(&resp_pkt[resp_len], ok, 2);
+                        resp_len += 2;
+                        sendto(server_sock, resp_pkt, resp_len, 0, (struct sockaddr *)client_addr, addr_len);
+                        
+                        if ((completed_acks + recovered_acks) >= g_target_runs) {
+                            save_metrics_and_exit(0);
+                        }
                     }
-
                 } else {
                     printf("ACK verification FAILED!\n");
                 }
@@ -241,10 +268,8 @@ void handle_coap_request(int server_sock, struct sockaddr_in6 *client_addr, sock
 }
 
 int main(int argc, char **argv) {
-    /* Fallback handler if you manually press Ctrl+C */
     signal(SIGINT, handle_sigint);
 
-    /* Parse Arguments: ./mock_kms [hash_size] [client_type] [total_runs] */
     if (argc > 1 && strcmp(argv[1], "512") == 0) {
         g_hash_type = WC_HASH_TYPE_SHA3_512;
         g_digest_size = WC_SHA3_512_DIGEST_SIZE;
@@ -276,9 +301,8 @@ int main(int argc, char **argv) {
     server_addr.sin6_family = AF_INET6; server_addr.sin6_addr = in6addr_any; server_addr.sin6_port = htons(PORT);
     bind(server_sock, (struct sockaddr *)&server_addr, sizeof(server_addr));
 
-    /* --- THE FIX: ADD 5-SECOND IDLE TIMEOUT --- */
     struct timeval tv;
-    tv.tv_sec = 5;  /* Wait 5 seconds before giving up */
+    tv.tv_sec = 5;  
     tv.tv_usec = 0;
     setsockopt(server_sock, SOL_SOCKET, SO_RCVTIMEO, &tv, sizeof(tv));
 
@@ -287,7 +311,6 @@ int main(int argc, char **argv) {
         int len = recvfrom(server_sock, buffer, sizeof(buffer) - 1, 0, (struct sockaddr *)&client_addr, &addr_len);
         
         if (len < 0) {
-            /* Socket timeout reached (5 seconds of silence) */
             int total_runs = completed_acks + recovered_acks;
             if (total_runs > 0) {
                 printf("\n>>> Network idle for 5 seconds. Assuming client has finished early!\n");

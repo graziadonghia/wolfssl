@@ -14,7 +14,6 @@
 
 #define A8_KMS_IP "2001:660:3207:400::2" 
 #define SLAVE_SAE_ID "bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb"
-#define KMS_SECRET "ClientSecretIoTKey384BitQuantumSafe1234567890123"
 #define COAP_PORT 5683
 
 byte current_k_wrap[32] = {0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08, 0x09, 0x0A, 0x0B, 0x0C, 0x0D, 0x0E, 0x0F, 0x10,
@@ -43,19 +42,12 @@ int main(int argc, char **argv) {
     int digest_size = WC_SHA3_384_DIGEST_SIZE;
     const char *algo_name = "SHA3-384";
 
-    if (argc < 2) {
-        printf("Usage: %s [512] <runs>\n", argv[0]);
-        printf("  512 - Use SHA3-512 instead of SHA3-384\n");
-        printf("  runs - Number of benchmark iterations (default: 100)\n");
-        return 1;
-    }
-
-    if (strcmp(argv[1], "512") == 0) {
+    if (argc > 1 && strcmp(argv[1], "512") == 0) {
         hash_type = WC_HASH_TYPE_SHA3_512;
         digest_size = WC_SHA3_512_DIGEST_SIZE;
         algo_name = "SHA3-512";
     }
-    int runs = atoi(argv[2]);
+    int runs = 1000;
     printf("\nStarting AEAD Ratchet Benchmark A8 Client (%s - %d runs)...\n", algo_name, runs);
     wolfCrypt_Init();
 
@@ -64,11 +56,14 @@ int main(int argc, char **argv) {
     remote.sin6_family = AF_INET6; remote.sin6_port = htons(COAP_PORT);
     inet_pton(AF_INET6, A8_KMS_IP, &remote.sin6_addr);
 
-    uint8_t coap_buf[1024]; Hmac hmac; uint16_t msg_id = 1000;
+    uint8_t coap_buf[1024]; 
+    uint16_t msg_id = 1000;
 
     if (1) {
         printf("\nrun_id,algo_name,t_start_us,t_auth_start_us,t_auth_end_us,t_extract_start_us,t_extract_end_us,t_ack_start_us,t_ack_end_us,auth_lat_ms,gcm_decrypt_ms,ack_rtt_ms,total_ms\n");
     }
+
+    uint32_t current_seq = 1;
 
     for (int i = 0; i < runs; i++) {
         uint64_t t_start = get_time_usec();
@@ -83,16 +78,20 @@ int main(int argc, char **argv) {
 
         /* --- PHASE 2: Request TLS Key --- */
         t_auth_start = get_time_usec();
-        const char *json_body = "{\"number\": 1, \"size\": 256}";
+        
+        current_seq++;
+        char json_body[128];
+        sprintf(json_body, "{\"seq\": %lu, \"size\": 256}", (unsigned long)current_seq);
+        
         byte mac_tag[64]; char hex_mac[129]; 
         
-        /* FIX: Safely initialize and free HMAC state */
         Hmac hmac = {0};
         wc_HmacInit(&hmac, NULL, INVALID_DEVID);
         wc_HmacSetKey(&hmac, hash_type, current_k_hmac, 32);
         wc_HmacUpdate(&hmac, (const byte*)json_body, strlen(json_body));
         wc_HmacFinal(&hmac, mac_tag);
         wc_HmacFree(&hmac);
+
         for (int j = 0; j < digest_size; j++) sprintf(&hex_mac[j * 2], "%02x", mac_tag[j]);
 
         char payload[512]; 
@@ -118,7 +117,6 @@ int main(int argc, char **argv) {
         if (ct_len == 124) { 
             byte *iv = ct_payload; byte *ct = ct_payload + 12; byte *tag = ct_payload + 108; byte pt[96];
 
-            /* FIX: Safely initialize and free AES state */
             Aes aes = {0}; 
             wc_AesInit(&aes, NULL, INVALID_DEVID);
             wc_AesGcmSetKey(&aes, current_k_wrap, 32);
@@ -135,14 +133,18 @@ int main(int argc, char **argv) {
         /* --- PHASE 4: Synchronization ACK --- */
         if (dec_res == 0) {
             t_ack_start = get_time_usec();
-            const char *ack_body = "{\"status\": \"ACK_SUCCESS\"}";
-            /* FIX: Re-initialize HMAC for the ACK phase */
+            
+            current_seq++;
+            char ack_body[128];
+            sprintf(ack_body, "{\"seq\": %lu, \"status\": \"ACK_SUCCESS\"}", (unsigned long)current_seq);
+
             Hmac hmac_ack = {0};
             wc_HmacInit(&hmac_ack, NULL, INVALID_DEVID);
             wc_HmacSetKey(&hmac_ack, hash_type, current_k_hmac, 32); 
             wc_HmacUpdate(&hmac_ack, (const byte*)ack_body, strlen(ack_body));
             wc_HmacFinal(&hmac_ack, mac_tag);
             wc_HmacFree(&hmac_ack);
+
             for (int j = 0; j < digest_size; j++) sprintf(&hex_mac[j * 2], "%02x", mac_tag[j]);
 
             sprintf(payload, "{\"alg\":\"%s\",\"auth\":\"%s\",\"body\":%s}", algo_name, hex_mac, ack_body);
@@ -156,7 +158,6 @@ int main(int argc, char **argv) {
 
         uint64_t t_final = (t_ack_end > 0) ? t_ack_end : get_time_usec();
 
-        /* --- METRICS --- */
         float auth_ms = (t_auth_end > t_auth_start) ? (t_auth_end - t_auth_start) / 1000.0f : 0.0f;
         float extract_ms = (t_extract_end > t_extract_start) ? (t_extract_end - t_extract_start) / 1000.0f : 0.0f;
         float ack_ms = (t_ack_end > t_ack_start) ? (t_ack_end - t_ack_start) / 1000.0f : 0.0f;
